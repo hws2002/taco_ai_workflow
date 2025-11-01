@@ -21,7 +21,6 @@ load_dotenv()
 def main(
     sample_size: int = None,
     similarity_threshold: float = 0.7,
-    use_spacy: bool = True,
     use_conceptnet: bool = False,
     save_to_neo4j: bool = True,
     clear_db: bool = False
@@ -32,7 +31,6 @@ def main(
     Args:
         sample_size: 샘플 데이터 크기 (None이면 전체)
         similarity_threshold: 유사도 임계값 (0~1)
-        use_spacy: spaCy 사용 여부
         use_conceptnet: ConceptNet 사용 여부
         save_to_neo4j: Neo4j에 저장 여부
         clear_db: Neo4j DB 초기화 여부
@@ -69,7 +67,6 @@ def main(
 
     analyzer = SemanticAnalyzer(
         model_name="jhgan/ko-sroberta-multitask",
-        use_spacy=use_spacy,
         use_dbpedia=False
     )
 
@@ -173,12 +170,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--no-spacy",
-        action="store_true",
-        help="spaCy 사용 안 함"
-    )
-
-    parser.add_argument(
         "--use-conceptnet",
         action="store_true",
         help="ConceptNet 사용 (느림)"
@@ -202,7 +193,6 @@ if __name__ == "__main__":
         main(
             sample_size=args.sample_size,
             similarity_threshold=args.threshold,
-            use_spacy=not args.no_spacy,
             use_conceptnet=args.use_conceptnet,
             save_to_neo4j=not args.no_neo4j,
             clear_db=args.clear_db

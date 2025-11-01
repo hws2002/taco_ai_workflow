@@ -77,10 +77,8 @@ def test_s2():
     model_start = time.time()
     analyzer = SemanticAnalyzer(
         model_name="jhgan/ko-sroberta-multitask",
-        use_spacy=True,
         use_keybert=True,  # KeyBERT 활성화
-        use_dbpedia=False,
-        spacy_model="ko_core_news_lg"
+        use_dbpedia=False
     )
     times['model_loading'] = time.time() - model_start
 
