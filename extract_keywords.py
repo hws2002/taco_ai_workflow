@@ -9,6 +9,7 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 import time
 import argparse
+import os
 
 def load_ai_responses(file_path: str) -> List[Dict[str, Any]]:
     """
@@ -177,6 +178,8 @@ def main():
     parser.add_argument("--nr-candidates", type=int, default=10, help="후보 키워드 수")
     parser.add_argument("--diversity", type=float, default=0.5, help="MMR 다양성(0-1)")
     parser.add_argument("--content-max-chars", type=int, default=1200, help="본문 최대 길이")
+    parser.add_argument("--no-cache", action="store_true", help="기존 출력 파일 캐시를 사용하지 않음")
+    parser.add_argument("--cache-input", type=str, default=None, help="캐시로 사용할 기존 키워드 JSON 경로 (기본: --output 경로)")
     args = parser.parse_args()
 
     input_file = args.input
@@ -192,37 +195,70 @@ def main():
     kw_model = KeyBERT(model='paraphrase-multilingual-MiniLM-L12-v2')
     print("모델 초기화 완료.\n")
 
-    print("키워드 추출 중...")
-    # 키워드 추출
-    t0 = time.time()
-    results = extract_keywords_from_responses(
-        responses,
-        kw_model,
-        top_n=args.top_n,
-        use_maxsum=False,  # MaxSum 비활성화 (MMR 사용)
-        nr_candidates=args.nr_candidates,
-        diversity=args.diversity,
-        use_parallel=not args.no_parallel,
-        processes=args.processes,
-        model_name='paraphrase-multilingual-MiniLM-L12-v2',
-        keyphrase_ngram_range=(1, 1),
-        stop_words='english',
-        content_max_chars=args.content_max_chars
-    )
-    elapsed = time.time() - t0
-    print("키워드 추출 완료.\n")
-    print(f"총 소요 시간: {elapsed:.2f}초, 문서당 평균: {elapsed/len(responses):.3f}초")
+    # 증분 캐시 로딩
+    cache_path = args.cache_input if args.cache_input else output_file
+    existing_by_id = {}
+    if not args.no_cache and os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                existing = json.load(f)
+            for item in existing:
+                rid = item.get('response_id')
+                if rid is not None:
+                    existing_by_id[rid] = item
+        except Exception:
+            existing_by_id = {}
+    missing_responses = [r for r in responses if r.get('response_id') not in existing_by_id]
+    print(f"캐시 상태: 기존 {len(existing_by_id)}개, 신규 {len(missing_responses)}개")
+
+    new_results = []
+    if missing_responses:
+        print("키워드 추출 중...")
+        # 키워드 추출 (신규만)
+        t0 = time.time()
+        new_results = extract_keywords_from_responses(
+            missing_responses,
+            kw_model,
+            top_n=args.top_n,
+            use_maxsum=False,  # MaxSum 비활성화 (MMR 사용)
+            nr_candidates=args.nr_candidates,
+            diversity=args.diversity,
+            use_parallel=not args.no_parallel,
+            processes=args.processes,
+            model_name='paraphrase-multilingual-MiniLM-L12-v2',
+            keyphrase_ngram_range=(1, 1),
+            stop_words='english',
+            content_max_chars=args.content_max_chars
+        )
+        elapsed = time.time() - t0
+        print("키워드 추출 완료.\n")
+        print(f"총 소요 시간: {elapsed:.2f}초, 문서당 평균: {elapsed/max(1,len(missing_responses)):.3f}초")
+
+    # 머지: 입력 responses 순서에 맞춰 구성
+    new_by_id = {item['response_id']: item for item in new_results}
+    merged = []
+    for r in responses:
+        rid = r.get('response_id')
+        if rid in existing_by_id:
+            merged.append(existing_by_id[rid])
+        elif rid in new_by_id:
+            merged.append(new_by_id[rid])
+        else:
+            # 비정상 케이스: 키워드 미생성. 안전하게 비어있는 구조로 생성
+            tmp = r.copy()
+            tmp['keywords'] = []
+            merged.append(tmp)
 
     # 결과 저장
     print(f"결과를 {output_file}에 저장 중...")
-    save_results(results, output_file)
+    save_results(merged, output_file)
     print("저장 완료.\n")
 
     # 요약 정보 출력
-    print_summary(results)
+    print_summary(merged)
 
     print(f"\n{'='*80}")
-    print(f"처리 완료! 총 {len(results)}개의 응답에서 키워드를 추출했습니다.")
+    print(f"처리 완료! 총 {len(merged)}개의 응답 결과를 기록했습니다. (신규 {len(new_results)}개, 캐시 {len(merged)-len(new_results)}개)")
     print(f"결과 파일: {output_file}")
     print(f"{'='*80}")
 
