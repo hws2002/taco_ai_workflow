@@ -20,7 +20,7 @@ class ConversationLoader:
         if data_path is None:
             # 기본 경로: 프로젝트 루트의 data/conversations.json
             project_root = Path(__file__).parent.parent
-            data_path = project_root / "data" / "conversations.json"
+            data_path = project_root / "data" / "mock_data.json"
 
         self.data_path = Path(data_path)
         self._validate_path()
