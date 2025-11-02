@@ -7,6 +7,8 @@ from keybert import KeyBERT
 from typing import List, Dict, Any
 from multiprocessing import Pool, cpu_count
 from functools import partial
+import time
+import argparse
 
 def load_ai_responses(file_path: str) -> List[Dict[str, Any]]:
     """
@@ -165,9 +167,20 @@ def print_summary(results: List[Dict[str, Any]]):
         print()
 
 def main():
-    # 파일 경로 설정
-    input_file = 'test/output/s1_ai_responses.json'
-    output_file = 'test/output/s2_ai_responses_with_keywords.json'
+    # CLI 인자 설정
+    parser = argparse.ArgumentParser(description="KeyBERT 키워드 추출")
+    parser.add_argument("--input", type=str, default='test/output/s1_ai_responses.json', help="입력 responses JSON 경로")
+    parser.add_argument("--output", type=str, default='test/output/s2_ai_responses_with_keywords.json', help="출력 JSON 경로")
+    parser.add_argument("--processes", type=int, default=None, help="병렬 프로세스 수 (기본: CPU-1)")
+    parser.add_argument("--no-parallel", action="store_true", help="병렬 처리 비활성화")
+    parser.add_argument("--top-n", type=int, default=5, help="문서당 키워드 수")
+    parser.add_argument("--nr-candidates", type=int, default=10, help="후보 키워드 수")
+    parser.add_argument("--diversity", type=float, default=0.5, help="MMR 다양성(0-1)")
+    parser.add_argument("--content-max-chars", type=int, default=1200, help="본문 최대 길이")
+    args = parser.parse_args()
+
+    input_file = args.input
+    output_file = args.output
 
     print("AI 응답 데이터 로딩 중...")
     responses = load_ai_responses(input_file)
@@ -181,21 +194,24 @@ def main():
 
     print("키워드 추출 중...")
     # 키워드 추출
+    t0 = time.time()
     results = extract_keywords_from_responses(
         responses,
         kw_model,
-        top_n=5,           # 각 문서당 5개의 키워드 추출
+        top_n=args.top_n,
         use_maxsum=False,  # MaxSum 비활성화 (MMR 사용)
-        nr_candidates=10,  # 후보 축소로 속도 향상
-        diversity=0.5,     # 중간 수준의 다양성
-        use_parallel=True, # 병렬 처리 활성화
-        processes=None,    # 기본: CPU 코어 - 1
+        nr_candidates=args.nr_candidates,
+        diversity=args.diversity,
+        use_parallel=not args.no_parallel,
+        processes=args.processes,
         model_name='paraphrase-multilingual-MiniLM-L12-v2',
         keyphrase_ngram_range=(1, 1),
         stop_words='english',
-        content_max_chars=1200
+        content_max_chars=args.content_max_chars
     )
+    elapsed = time.time() - t0
     print("키워드 추출 완료.\n")
+    print(f"총 소요 시간: {elapsed:.2f}초, 문서당 평균: {elapsed/len(responses):.3f}초")
 
     # 결과 저장
     print(f"결과를 {output_file}에 저장 중...")
