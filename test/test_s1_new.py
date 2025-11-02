@@ -105,14 +105,17 @@ def test_s1_new(sample_size=50, use_cache=False):
     # AI 답변을 dict로 변환
     responses_dict = []
     for resp in ai_responses:
-        responses_dict.append({
+        response_data = {
             "response_id": resp.response_id,
             "conversation_id": resp.conversation_id,
             "conversation_title": resp.conversation_title,
             "message_index": resp.message_index,
-            "content": resp.content,
-            "timestamp": resp.timestamp
-        })
+            "content": resp.content
+        }
+        # timestamp가 있는 경우에만 추가
+        if resp.timestamp is not None:
+            response_data["timestamp"] = resp.timestamp
+        responses_dict.append(response_data)
 
     # JSON 저장
     output_file = output_dir / "s1_ai_responses.json"

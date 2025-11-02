@@ -29,8 +29,8 @@ class AIResponse:
     conversation_id: int  # 어느 대화에 속하는지
     conversation_title: str
     content: str  # AI 답변 내용
-    create_time: float
     message_index: int  # 해당 대화 내에서 몇 번째 AI 답변인지
+    timestamp: Optional[float] = None  # 생성 시간 (선택적)
 
     def __str__(self):
         return f"AIResponse(id={self.response_id}, conv={self.conversation_id}, idx={self.message_index})"
@@ -266,8 +266,8 @@ class NoteParser:
                     conversation_id=conversation_id,
                     conversation_title=title,
                     content=content,
-                    create_time=msg['create_time'],
-                    message_index=ai_message_index
+                    message_index=ai_message_index,
+                    timestamp=msg.get('create_time')  # 선택적으로 가져오기
                 ))
 
                 ai_message_index += 1

@@ -65,7 +65,7 @@ def test_s2_new(sample_size=50, use_cache=True):
                 conversation_title=data['conversation_title'],
                 message_index=data['message_index'],
                 content=data['content'],
-                timestamp=data['timestamp']
+                timestamp=data.get('timestamp')  # 선택적으로 가져오기
             ))
 
         print(f"✓ {len(ai_responses)}개의 AI 답변 로드 완료")

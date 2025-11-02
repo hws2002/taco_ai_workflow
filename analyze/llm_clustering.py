@@ -7,6 +7,7 @@ import json
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 import os
+from dotenv import load_dotenv
 
 
 class LLMClusterer:
@@ -36,6 +37,11 @@ class LLMClusterer:
         self.model = model
 
         # API 키 설정
+        current_file_path = Path(__file__)
+        script_dir = current_file_path.resolve().parent
+        dotenv_path = script_dir / '.env'
+        load_dotenv(dotenv_path=dotenv_path)
+
         if api_key:
             self.api_key = api_key
         elif self.provider == "openai":
@@ -44,6 +50,8 @@ class LLMClusterer:
             self.api_key = os.getenv("ANTHROPIC_API_KEY")
         else:
             raise ValueError(f"지원하지 않는 provider: {provider}")
+        
+        print(self.api_key)
 
         if not self.api_key:
             raise ValueError(f"{self.provider.upper()} API 키가 설정되지 않았습니다.")
@@ -59,7 +67,10 @@ class LLMClusterer:
         if self.provider == "openai":
             try:
                 import openai
-                self.client = openai.OpenAI(api_key=self.api_key)
+                self.client = openai.OpenAI(
+                    api_key=self.api_key,
+                    baseURL="https://api.chatanywhere.tech/v1"
+                )
             except ImportError:
                 raise ImportError("OpenAI 패키지가 설치되어 있지 않습니다: pip install openai")
 
