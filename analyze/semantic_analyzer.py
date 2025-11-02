@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import re
+from tqdm import tqdm
 from .parser import Note, AIResponse
 
 try:
@@ -288,17 +289,19 @@ class SemanticAnalyzer:
             if len(text) > max_length:
                 text = text[:max_length]
 
-            # KeyBERT로 키워드 추출
+            # KeyBERT로 키워드 추출 (최적화된 설정)
             # keyphrase_ngram_range: (1, 2) = 1~2 단어 조합
             # stop_words: None (우리가 이미 필터링함)
-            # top_n: 상위 20개
+            # top_n: 상위 10개
+            # nr_candidates를 줄여서 속도 향상
             keywords = self.keybert.extract_keywords(
                 text,
                 keyphrase_ngram_range=(1, 2),
                 stop_words=None,
                 top_n=10,
-                use_maxsum=True,  # Max Sum Distance로 다양성 확보
-                nr_candidates=50
+                use_mmr=True,  # MMR로 다양성 확보 (maxsum보다 빠름)
+                diversity=0.5,
+                nr_candidates=20  # 50 -> 20으로 줄임 (2.5배 빨라짐)
             )
 
             # (keyword, score) 튜플에서 keyword만 추출
@@ -356,16 +359,25 @@ class SemanticAnalyzer:
 
         results = {}
 
-        for idx, response in enumerate(ai_responses):
-            try:
-                print(f"{idx+1}번째 AI 답변 분석 시작")
-                # 1. 의미 벡터 생성
-                embedding = self._create_embedding(response.content)
+        # Step 1: 배치로 임베딩 생성 (훨씬 빠름)
+        print("1. 임베딩 배치 생성 중...")
+        texts = [resp.content for resp in ai_responses]
+        embeddings = self.create_embeddings_batch(texts)
 
-                print(f"총 {len(embedding)}개의 의미 벡터 추출 완료")
-                # 2. 핵심 개념 추출
-                concepts = self._extract_concepts(response.content)
-                print(f"핵심 개념 추출 완료")
+        # Step 2: 개념 추출 (필요한 경우에만)
+        if self.use_keybert:
+            print("2. 개념 추출 중...")
+            progress_bar = tqdm(enumerate(ai_responses), total=len(ai_responses), desc="개념 추출")
+        else:
+            progress_bar = enumerate(ai_responses)
+
+        for idx, response in progress_bar:
+            try:
+                # 이미 생성된 임베딩 사용
+                embedding = embeddings[idx]
+
+                # 핵심 개념 추출 (KeyBERT가 활성화된 경우에만)
+                concepts = self._extract_concepts(response.content) if self.use_keybert else []
 
                 results[response.response_id] = {
                     'embedding': embedding,
@@ -376,10 +388,10 @@ class SemanticAnalyzer:
                 }
 
             except Exception as e:
-                print(f"경고: AI 답변 {response.response_id} 분석 실패 - {e}")
+                print(f"\n경고: AI 답변 {response.response_id} 분석 실패 - {e}")
                 continue
 
-        print(f"총 {len(results)}개의 AI 답변 분석 완료")
+        print(f"\n✓ 총 {len(results)}개의 AI 답변 분석 완료")
         return results
 
     def create_embeddings_batch(self, texts: List[str]) -> np.ndarray:

@@ -168,7 +168,7 @@ def test_s2_new(sample_size=50, use_cache=True):
     print(f"  - 총 {len(response_embeddings)}개")
     print(f"  - 파일 크기: {embeddings_file.stat().st_size / 1024 / 1024:.2f} MB")
 
-    # 개념 저장 (JSON)
+    # AI 답변별 개념 저장 (JSON)
     concepts_dict = {
         rid: data['concepts']
         for rid, data in response_embeddings.items()
@@ -178,8 +178,55 @@ def test_s2_new(sample_size=50, use_cache=True):
     with open(concepts_file, 'w', encoding='utf-8') as f:
         json.dump(concepts_dict, f, ensure_ascii=False, indent=2)
 
-    print(f"✓ 개념 저장: {concepts_file}")
+    print(f"✓ AI 답변별 개념 저장: {concepts_file}")
     print(f"  - 총 {len(concepts_dict)}개")
+
+    # ============================================================
+    # 3-1. Conversation별 키워드 집계 (LLM 대분류용)
+    # ============================================================
+    print("\n" + "-" * 80)
+    print("[3-1] Conversation별 키워드 집계")
+    print("-" * 80)
+
+    from collections import defaultdict
+
+    # conversation_id별로 키워드 수집
+    conversation_keywords = defaultdict(set)
+    conversation_titles = {}
+
+    for rid, data in response_embeddings.items():
+        conv_id = data['conversation_id']
+        conv_title = data['conversation_title']
+        keywords = data['concepts']
+
+        # 키워드 추가
+        conversation_keywords[conv_id].update(keywords)
+        # 제목 저장
+        conversation_titles[conv_id] = conv_title
+
+    # set을 list로 변환하고 conversation 정보 포함
+    conversation_keywords_list = {
+        conv_id: {
+            'title': conversation_titles[conv_id],
+            'keywords': sorted(list(keywords))  # 정렬해서 저장
+        }
+        for conv_id, keywords in conversation_keywords.items()
+    }
+
+    # Conversation별 키워드 저장
+    conv_keywords_file = output_dir / "s2_conversation_keywords.json"
+    with open(conv_keywords_file, 'w', encoding='utf-8') as f:
+        json.dump(conversation_keywords_list, f, ensure_ascii=False, indent=2)
+
+    print(f"✓ Conversation별 키워드 저장: {conv_keywords_file}")
+    print(f"  - 총 {len(conversation_keywords_list)}개 채팅 기록")
+
+    # 키워드 통계
+    keyword_counts = [len(data['keywords']) for data in conversation_keywords_list.values()]
+    if keyword_counts:
+        print(f"  - 평균 키워드 수: {sum(keyword_counts) / len(keyword_counts):.1f}개")
+        print(f"  - 최소 키워드 수: {min(keyword_counts)}개")
+        print(f"  - 최대 키워드 수: {max(keyword_counts)}개")
 
     # 통계 정보 저장
     times['saving'] = time.time() - save_start
@@ -194,6 +241,8 @@ def test_s2_new(sample_size=50, use_cache=True):
         "embedding_dimension": embedding_dims[0] if embedding_dims else 0,
         "avg_concepts_per_response": sum(concept_counts) / len(concept_counts) if concept_counts else 0,
         "total_concepts": sum(concept_counts),
+        "total_conversations": len(conversation_keywords_list),
+        "avg_keywords_per_conversation": sum(keyword_counts) / len(keyword_counts) if keyword_counts else 0,
         "cache_used": use_cache,
         "elapsed_time": {
             "loading_seconds": round(times['loading'], 2),
