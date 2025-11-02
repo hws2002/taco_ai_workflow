@@ -5,6 +5,8 @@ KeyBERT를 사용하여 s1_ai_responses.json의 각 AI 응답에서 키워드를
 import json
 from keybert import KeyBERT
 from typing import List, Dict, Any
+from multiprocessing import Pool, cpu_count
+from functools import partial
 
 def load_ai_responses(file_path: str) -> List[Dict[str, Any]]:
     """
@@ -19,13 +21,57 @@ def load_ai_responses(file_path: str) -> List[Dict[str, Any]]:
     with open(file_path, 'r', encoding='utf-8') as f:
         return json.load(f)
 
+# 프로세스 로컬 모델 보관용 전역 변수
+_KW_MODEL = None
+
+def _init_kw_model(model_name: str):
+    global _KW_MODEL
+    _KW_MODEL = KeyBERT(model=model_name)
+
+def _extract_one(response: Dict[str, Any],
+                keyphrase_ngram_range,
+                top_n: int,
+                nr_candidates: int,
+                diversity: float,
+                stop_words: str,
+                content_max_chars: int) -> Dict[str, Any]:
+    content = response['content']
+    if content_max_chars is not None:
+        content = content[:content_max_chars]
+
+    keywords = _KW_MODEL.extract_keywords(
+        content,
+        keyphrase_ngram_range=keyphrase_ngram_range,
+        stop_words=stop_words,
+        use_mmr=True,
+        diversity=diversity,
+        nr_candidates=nr_candidates,
+        top_n=top_n
+    )
+
+    result = response.copy()
+    result['keywords'] = [
+        {
+            'keyword': kw,
+            'score': float(score)
+        }
+        for kw, score in keywords
+    ]
+    return result
+
 def extract_keywords_from_responses(
     responses: List[Dict[str, Any]],
     kw_model: KeyBERT,
     top_n: int = 5,
     use_maxsum: bool = True,
     nr_candidates: int = 20,
-    diversity: float = 0.5
+    diversity: float = 0.5,
+    use_parallel: bool = True,
+    processes: int = None,
+    model_name: str = 'paraphrase-multilingual-MiniLM-L12-v2',
+    keyphrase_ngram_range: tuple = (1, 1),
+    stop_words: str = 'english',
+    content_max_chars: int = 1200
 ) -> List[Dict[str, Any]]:
     """
     각 AI 응답에서 KeyBERT를 사용하여 키워드를 추출합니다.
@@ -34,51 +80,58 @@ def extract_keywords_from_responses(
         responses: AI 응답 객체 리스트
         kw_model: KeyBERT 모델 인스턴스
         top_n: 추출할 키워드 개수 (기본값: 5)
-        use_maxsum: MaxSum을 사용할지 여부 (기본값: True)
+        use_maxsum: MaxSum을 사용할지 여부 (MMR로 대체됨)
         nr_candidates: 후보 키워드 개수 (기본값: 20)
         diversity: 다양성 파라미터 (0-1, 높을수록 다양한 키워드) (기본값: 0.5)
+        use_parallel: 병렬 처리 여부 (기본값: True)
+        processes: 사용할 프로세스 수 (None이면 CPU 코어 - 1)
+        model_name: 병렬 처리 시 워커가 로드할 모델 이름
+        keyphrase_ngram_range: 키프레이즈 n-gram 범위 (기본값: (1,1))
+        stop_words: 불용어 설정 (기본값: 'english')
+        content_max_chars: 각 응답에서 사용할 최대 문자 수 (기본값: 1200)
 
     Returns:
         키워드 정보가 추가된 응답 객체 리스트
     """
-    results = []
-
-    for response in responses:
-        content = response['content']
-
-        # KeyBERT를 사용하여 키워드 추출
-        if use_maxsum:
-            # MaxSum 방식: 다양성을 고려한 키워드 추출
-            keywords = kw_model.extract_keywords(
-                content,
-                keyphrase_ngram_range=(1, 2),  # 1-2개 단어로 구성된 키워드
-                stop_words='english',
-                use_maxsum=True,
-                nr_candidates=nr_candidates,
+    if use_parallel:
+        procs = processes if processes is not None else max(1, cpu_count() - 1)
+        with Pool(processes=procs, initializer=_init_kw_model, initargs=(model_name,)) as pool:
+            func = partial(
+                _extract_one,
+                keyphrase_ngram_range=keyphrase_ngram_range,
                 top_n=top_n,
-                diversity=diversity
+                nr_candidates=nr_candidates,
+                diversity=diversity,
+                stop_words=stop_words,
+                content_max_chars=content_max_chars,
             )
-        else:
-            # 기본 방식: 코사인 유사도 기반
+            results = pool.map(func, responses)
+        return results
+    else:
+        results = []
+        for response in responses:
+            content = response['content']
+            if content_max_chars is not None:
+                content = content[:content_max_chars]
             keywords = kw_model.extract_keywords(
                 content,
-                keyphrase_ngram_range=(1, 2),
-                stop_words='english',
+                keyphrase_ngram_range=keyphrase_ngram_range,
+                stop_words=stop_words,
+                use_mmr=True,
+                diversity=diversity,
+                nr_candidates=nr_candidates,
                 top_n=top_n
             )
-
-        # 결과에 키워드 정보 추가
-        result = response.copy()
-        result['keywords'] = [
-            {
-                'keyword': kw,
-                'score': float(score)
-            }
-            for kw, score in keywords
-        ]
-        results.append(result)
-
-    return results
+            result = response.copy()
+            result['keywords'] = [
+                {
+                    'keyword': kw,
+                    'score': float(score)
+                }
+                for kw, score in keywords
+            ]
+            results.append(result)
+        return results
 
 def save_results(results: List[Dict[str, Any]], output_path: str):
     """
@@ -132,9 +185,15 @@ def main():
         responses,
         kw_model,
         top_n=5,           # 각 문서당 5개의 키워드 추출
-        use_maxsum=True,   # 다양성을 고려한 MaxSum 방식 사용
-        nr_candidates=20,  # 20개의 후보 중에서 선택
-        diversity=0.5      # 중간 수준의 다양성
+        use_maxsum=False,  # MaxSum 비활성화 (MMR 사용)
+        nr_candidates=10,  # 후보 축소로 속도 향상
+        diversity=0.5,     # 중간 수준의 다양성
+        use_parallel=True, # 병렬 처리 활성화
+        processes=None,    # 기본: CPU 코어 - 1
+        model_name='paraphrase-multilingual-MiniLM-L12-v2',
+        keyphrase_ngram_range=(1, 1),
+        stop_words='english',
+        content_max_chars=1200
     )
     print("키워드 추출 완료.\n")
 
