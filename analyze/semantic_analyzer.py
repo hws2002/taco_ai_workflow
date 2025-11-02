@@ -38,7 +38,7 @@ class SemanticAnalyzer:
     ):
         """
         Args:
-            model_name: SBERT 모델 이름 (한국어 모델 추천)
+            model_name: SBERT 모델 이름
             use_keybert: KeyBERT를 사용한 키워드 추출 여부
             use_dbpedia: DBpedia Spotlight 사용 여부
             dbpedia_url: DBpedia Spotlight API URL

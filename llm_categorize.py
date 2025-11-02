@@ -46,7 +46,7 @@ def load_prompt(path: str) -> str:
         return f.read()
 
 
-def call_llm_categories(prompt: str, model: str, provider: str = 'openai') -> str:
+def call_llm_categories(system_prompt: str, user_prompt: str, model: str, provider: str = 'openai') -> str:
     if provider != 'openai':
         raise ValueError(f"Unsupported provider: {provider}")
     if OpenAI is None:
@@ -63,10 +63,11 @@ def call_llm_categories(prompt: str, model: str, provider: str = 'openai') -> st
     resp = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": "You are a helpful data analyst. Respond in strict JSON only."},
-            {"role": "user", "content": prompt},
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
         ],
         temperature=0.2,
+        response_format={"type": "json_object"},
     )
     return resp.choices[0].message.content
 
@@ -78,9 +79,11 @@ def main():
     parser.add_argument("--keywords-input", type=str, default=str(project_root / 'test' / 'output' / 's2_ai_responses_with_keywords.json'), help="키워드 JSON 경로")
     parser.add_argument("--prompt-file", type=str, default=str(project_root / 'llm_clustering_prompt.txt'), help="프롬프트 템플릿 파일 경로")
     parser.add_argument("--output", type=str, default=str(project_root / 'test' / 'output' / 's6_categories.json'), help="대분류 결과 JSON 출력 경로")
-    parser.add_argument("--model", type=str, default="gpt-4o-mini", help="LLM 모델명 (예: gpt-4o-mini)")
+    parser.add_argument("--assignments-output", type=str, default=str(project_root / 'test' / 'output' / 's6_categories_assignments.json'), help="assignments 전용 매핑 JSON 출력 경로 (topic_pipeline --categories 용)")
+    parser.add_argument("--model", type=str, default="gpt-4o", help="LLM 모델명 (예: gpt-4o)")
     parser.add_argument("--provider", type=str, default="openai", help="LLM 제공자 (현재 openai만 지원)")
     parser.add_argument("--top-n-per-response", type=int, default=5, help="응답당 사용할 상위 키워드 수")
+    parser.add_argument("--raw-output", type=str, default=str(project_root / 'test' / 'output' / 's6_categories_raw.txt'), help="LLM 원문 응답 저장 경로")
     args = parser.parse_args()
 
     # .env 로드
@@ -91,11 +94,11 @@ def main():
     conv_keywords = aggregate_keywords_per_conversation(kw_items, top_n_per_response=args.top_n_per_response)
 
     # 프롬프트 구성
-    base_prompt = load_prompt(args.prompt_file)
-    # Provide explicit JSON output guidance
+    system_prompt = load_prompt(args.prompt_file)
+    # Provide explicit JSON output guidance (include reason)
     output_schema_hint = (
         "\n\n요청: 다음 형식의 JSON만 반환하세요. 예시:\n" \
-        "{\n  \"categories\": [\"카테고리1\", \"카테고리2\", ...],\n  \"assignments\": { \"<conversation_id>\": \"카테고리명\", ... }\n}\n"
+        "{\n  \"categories\": [\"카테고리1\", \"카테고리2\", ...],\n  \"assignments\": { \"<conversation_id>\": \"카테고리명\", ... },\n  \"reason\": \"왜 이런 카테고리와 할당을 했는지에 대한 상세 설명\"\n}\n"
     )
 
     # Prepare a compact JSON of conversation->keywords for the model
@@ -105,11 +108,11 @@ def main():
     }
     user_payload = json.dumps(preview, ensure_ascii=False, indent=2)
 
-    full_prompt = f"{base_prompt}\n\n[입력 데이터: 대화별 키워드]\n{user_payload}\n{output_schema_hint}"
+    user_prompt = f"[입력 데이터: 대화별 키워드]\n{user_payload}\n{output_schema_hint}"
 
     # LLM 호출
     print("LLM 대분류 실행 중...")
-    content = call_llm_categories(full_prompt, model=args.model, provider=args.provider)
+    content = call_llm_categories(system_prompt, user_prompt, model=args.model, provider=args.provider)
 
     # 응답 파싱
     try:
@@ -122,13 +125,28 @@ def main():
         except Exception:
             raise RuntimeError(f"LLM 응답을 JSON으로 파싱하지 못했습니다. 원문:\n{content}")
 
-    # 저장
+    # 저장 (JSON 결과)
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+    # assignments-only 저장
+    assignments = data.get('assignments', {}) if isinstance(data, dict) else {}
+    assign_path = Path(args.assignments_output)
+    assign_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(assign_path, 'w', encoding='utf-8') as f:
+        json.dump(assignments, f, ensure_ascii=False, indent=2)
+
+    # LLM 원문 응답 별도 저장
+    raw_path = Path(args.raw_output)
+    raw_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(raw_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
     print(f"대분류 결과 저장: {out_path}")
+    print(f"카테고리 매핑 저장(--categories 용): {assign_path}")
+    print(f"LLM 원문 저장: {raw_path}")
 
 
 if __name__ == "__main__":

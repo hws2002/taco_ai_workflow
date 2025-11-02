@@ -25,8 +25,9 @@ def extract_embeddings(
     batch_size: int = 32,
     normalize_embeddings: bool = True,
     content_max_chars: int = None,
+    cache_dir: str = None,
 ) -> List[Dict[str, Any]]:
-    model = SentenceTransformer(model_name)
+    model = SentenceTransformer(model_name, cache_folder=cache_dir)
 
     texts = []
     meta = []
@@ -72,6 +73,7 @@ def main():
     parser.add_argument("--no-normalize", action="store_true", help="임베딩 정규화 비활성화")
     parser.add_argument("--content-max-chars", type=int, default=None, help="본문 최대 길이 (문자)")
     parser.add_argument("--model", type=str, default="thenlper/gte-base", help="SentenceTransformer 모델명")
+    parser.add_argument("--cache-dir", type=str, default=str(project_root / 'models_cache'), help="SentenceTransformer 캐시 디렉터리")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -109,12 +111,14 @@ def main():
     if missing_responses:
         print(f"임베딩 추출 중... (model={args.model})")
         t0 = time.time()
+        print(f"모델 캐시 디렉터리: {args.cache_dir}")
         new_items = extract_embeddings(
             missing_responses,
             model_name=args.model,
             batch_size=args.batch_size,
             normalize_embeddings=not args.no_normalize,
             content_max_chars=args.content_max_chars,
+            cache_dir=args.cache_dir,
         )
         total_elapsed = time.time() - t0
         print(f"임베딩 추출 완료. 총 소요 시간: {total_elapsed:.2f}초\n")

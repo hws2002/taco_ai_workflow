@@ -77,7 +77,11 @@ def pool_by_conversation(responses: List[Dict[str, Any]], topics: List[int], emb
     return conv_topic_vectors
 
 
-def compute_conversation_similarity(conv_vectors: Dict[Any, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def compute_conversation_similarity(
+    conv_vectors: Dict[Any, List[Dict[str, Any]]],
+    hard_threshold: float = 0.8,
+    pending_threshold: float = 0.5,
+) -> List[Dict[str, Any]]:
     cids = list(conv_vectors.keys())
     edges = []
     for i in range(len(cids)):
@@ -92,7 +96,7 @@ def compute_conversation_similarity(conv_vectors: Dict[Any, List[Dict[str, Any]]
             B = np.stack([x["vector"] for x in vb])
             sims = cosine_similarity(A, B)
             score = float(sims.mean())
-            status = "hard" if score >= 0.7 else ("pending" if score >= 0.5 else None)
+            status = "hard" if score >= hard_threshold else ("pending" if score >= pending_threshold else None)
             if status:
                 edges.append({"source": a, "target": b, "similarity": score, "status": status})
     return edges
@@ -169,6 +173,8 @@ def main():
     parser.add_argument("--ngram-max", type=int, default=2, help="CountVectorizer ngram 최대")
     parser.add_argument("--stop-words", type=str, default="english", help="불용어 설정 (None, english 등)")
     parser.add_argument("--categories", type=str, default=None, help="선택: 대분류 카테고리 JSON (conversation_id -> category)")
+    parser.add_argument("--hard-threshold", type=float, default=0.8, help="하드 엣지 임계값 (코사인 유사도)")
+    parser.add_argument("--pending-threshold", type=float, default=0.5, help="펜딩 엣지 임계값 (코사인 유사도)")
     args = parser.parse_args()
 
     out_dir = Path(args.output_dir)
@@ -203,7 +209,11 @@ def main():
     export_conv_vectors(conv_vectors, out_dir)
 
     print("대화간 유사도 및 엣지 생성...")
-    edges = compute_conversation_similarity(conv_vectors)
+    edges = compute_conversation_similarity(
+        conv_vectors,
+        hard_threshold=args.hard_threshold,
+        pending_threshold=args.pending_threshold,
+    )
     export_edges(edges, out_dir)
 
     cats = load_categories(args.categories)
@@ -213,6 +223,10 @@ def main():
     total_edges = len(edges)
     within = 0
     cross = 0
+    hard_within = 0
+    hard_cross = 0
+    pending_within = 0
+    pending_cross = 0
     if cats:
         cat_map = cats
         for e in edges:
@@ -221,14 +235,26 @@ def main():
             if cat_map.get(a) and cat_map.get(b):
                 if cat_map[a] == cat_map[b]:
                     within += 1
+                    if e.get("status") == "hard":
+                        hard_within += 1
+                    elif e.get("status") == "pending":
+                        pending_within += 1
                 else:
                     cross += 1
+                    if e.get("status") == "hard":
+                        hard_cross += 1
+                    elif e.get("status") == "pending":
+                        pending_cross += 1
 
     stats = {
         "bertopic_seconds": round(t_bertopic, 2),
         "total_edges": total_edges,
         "within_category_edges": within,
         "cross_category_edges": cross,
+        "hard_within_category_edges": hard_within,
+        "hard_cross_category_edges": hard_cross,
+        "pending_within_category_edges": pending_within,
+        "pending_cross_category_edges": pending_cross,
     }
     with open(out_dir / "s6_stats.json", "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)

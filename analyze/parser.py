@@ -138,6 +138,7 @@ class NoteParser:
                 continue
 
             text = str(parts[0]).strip()
+            text = self._sanitize_text(text)
 
             if not text:
                 continue
@@ -174,6 +175,23 @@ class NoteParser:
             merged_parts.append(f"[{role_label}] {content}")
 
         return "\n\n".join(merged_parts)
+
+    def _sanitize_text(self, text: str) -> str:
+        try:
+            emoji_pattern = re.compile(r"[\U0001F300-\U0001FAFF\U0001F600-\U0001F64F\u2600-\u27BF]+", flags=re.UNICODE)
+            text = emoji_pattern.sub("", text)
+        except re.error:
+            text = re.sub(r"[\u2600-\u27BF]+", "", text)
+        fillers = [
+            "좋습니다",
+            "알겠습니다",
+            "아주 좋은 시도",
+            "좋은 시도",
+            "감사합니다",
+        ]
+        for f in fillers:
+            text = text.replace(f, "")
+        return text.strip()
 
     def export_notes_to_dict(self, notes: List[Note]) -> List[Dict[str, Any]]:
         """
@@ -253,7 +271,7 @@ class NoteParser:
 
         for msg in messages:
             if msg['role'] == 'assistant':
-                content = msg['content'].strip()
+                content = self._sanitize_text(msg['content']).strip()
 
                 # 최소 길이 체크
                 if len(content) < self.min_content_length:
