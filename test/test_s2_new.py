@@ -113,7 +113,7 @@ def test_s2_new(sample_size=50, use_cache=True):
             print(f"\n{len(missing_ids)}개의 새로운 임베딩 계산 중...")
 
             analyzer = SemanticAnalyzer(
-                model_name="BAAI/bge-m3",  # 다국어 모델
+                model_name="thenlper/gte-base",  # 더 빠른 모델
                 use_keybert=True
             )
 
@@ -136,7 +136,7 @@ def test_s2_new(sample_size=50, use_cache=True):
         # 캐시 사용 안 함
         print("캐시 사용 안 함 - 전체 계산")
         analyzer = SemanticAnalyzer(
-            model_name="BAAI/bge-m3",
+            model_name="thenlper/gte-base",
             use_keybert=True
         )
 

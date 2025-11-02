@@ -157,47 +157,47 @@ class SemanticAnalyzer:
             concepts.update(keybert_concepts)
 
         # 2. 기본 키워드 추출 (폴백)
-        basic_concepts = self._extract_basic_keywords(text)
-        concepts.update(basic_concepts)
+        # basic_concepts = self._extract_basic_keywords(text)
+        # concepts.update(basic_concepts)
 
         # 3. DBpedia Spotlight 사용 (선택적)
-        if self.use_dbpedia and self.dbpedia_url:
-            dbpedia_concepts = self._extract_dbpedia_concepts(text)
-            concepts.update(dbpedia_concepts)
+        # if self.use_dbpedia and self.dbpedia_url:
+        #     dbpedia_concepts = self._extract_dbpedia_concepts(text)
+        #     concepts.update(dbpedia_concepts)
 
         return list(concepts)[:50]  # 최대 50개로 제한
 
-    def _extract_basic_keywords(self, text: str) -> List[str]:
-        """
-        기본 키워드 추출 (정규식 기반)
+    # def _extract_basic_keywords(self, text: str) -> List[str]:
+    #     """
+    #     기본 키워드 추출 (정규식 기반)
 
-        Args:
-            text: 입력 텍스트
+    #     Args:
+    #         text: 입력 텍스트
 
-        Returns:
-            키워드 리스트
-        """
-        # 역할 표시 제거
-        text = re.sub(r'\[(사용자|어시스턴트)\]\s*', '', text)
+    #     Returns:
+    #         키워드 리스트
+    #     """
+    #     # 역할 표시 제거
+    #     text = re.sub(r'\[(사용자|어시스턴트)\]\s*', '', text)
 
-        # 영어 단어 추출 (대문자 시작, 3글자 이상)
-        english_terms = re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', text)
+    #     # 영어 단어 추출 (대문자 시작, 3글자 이상)
+    #     english_terms = re.findall(r'\b[A-Z][a-zA-Z]{2,}\b', text)
 
-        # 한글 단어 추출 (2글자 이상)
-        korean_terms = re.findall(r'[가-힣]{2,}', text)
+    #     # 한글 단어 추출 (2글자 이상)
+    #     korean_terms = re.findall(r'[가-힣]{2,}', text)
 
-        # 빈도수 계산하여 상위 키워드 선택
-        from collections import Counter
-        all_terms = english_terms + korean_terms
-        counter = Counter(all_terms)
+    #     # 빈도수 계산하여 상위 키워드 선택
+    #     from collections import Counter
+    #     all_terms = english_terms + korean_terms
+    #     counter = Counter(all_terms)
 
-        # 불용어 사전 사용하여 필터링
-        keywords = [
-            word for word, count in counter.most_common(30)
-            if word not in self.stopwords and count >= 2
-        ]
+    #     # 불용어 사전 사용하여 필터링
+    #     keywords = [
+    #         word for word, count in counter.most_common(30)
+    #         if word not in self.stopwords and count >= 2
+    #     ]
 
-        return keywords
+    #     return keywords
 
     def _extract_dbpedia_concepts(self, text: str) -> List[str]:
         """
@@ -296,7 +296,7 @@ class SemanticAnalyzer:
                 text,
                 keyphrase_ngram_range=(1, 2),
                 stop_words=None,
-                top_n=20,
+                top_n=10,
                 use_maxsum=True,  # Max Sum Distance로 다양성 확보
                 nr_candidates=50
             )
@@ -308,7 +308,7 @@ class SemanticAnalyzer:
                 if kw not in self.stopwords and len(kw) >= 2
             ]
 
-            return concepts[:15]  # 최대 15개
+            return concepts[:10]  # 최대 10개
 
         except Exception as e:
             print(f"경고: KeyBERT 처리 실패 - {e}")
@@ -356,13 +356,16 @@ class SemanticAnalyzer:
 
         results = {}
 
-        for response in ai_responses:
+        for idx, response in enumerate(ai_responses):
             try:
+                print(f"{idx+1}번째 AI 답변 분석 시작")
                 # 1. 의미 벡터 생성
                 embedding = self._create_embedding(response.content)
 
+                print(f"총 {len(embedding)}개의 의미 벡터 추출 완료")
                 # 2. 핵심 개념 추출
                 concepts = self._extract_concepts(response.content)
+                print(f"핵심 개념 추출 완료")
 
                 results[response.response_id] = {
                     'embedding': embedding,
