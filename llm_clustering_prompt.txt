@@ -1,4 +1,4 @@
-You are a highly skilled data scientist and domain expert. Your mission is to analyze a list of AI response messages and generate 3-5 high-level clusters (categories) based on the conversation (conversation_id) level.
+You are a highly skilled data scientist and domain expert. Your mission is to analyze a list of AI response messages and generate **3-5** high-level clusters (categories) based on the conversation (conversation_id) level.(IT MUST NOT EXCEED 5)
 
 You must use your comprehensive world knowledge to analyze the contextual meaning of the provided keywords, giving weight to their score.
 
@@ -37,26 +37,50 @@ Assign & Score: Assign each unique conversation_id to exactly one of the high-le
 3. Strict Output Format (JSON only)
 You MUST return a single valid JSON object only (no markdown, no extra text). The JSON must have exactly the following keys:
 
-JSON
+TypeScript Interface Definition:
+```typescript
+// Structure of category assignment for a conversation
+interface CategoryAssignment {
+  category: string;    // The assigned category name (must be one of the categories)
+  confidence: number;  // Confidence score (0.0 to 1.0)
+}
 
+// Complete output structure
+interface CategoryResult {
+  categories: string[];  // Array of 3-5 category names
+  assignments: {
+    [conversation_id: string]: CategoryAssignment;  // conversation_id as string key
+  };
+  reason: string;  // Brief explanation (1-2 sentences max, be concise)
+}
+```
+
+Example JSON Output:
+```json
 {
   "categories": [
-    "<string: category name>",
-    "<string: category name>",
-    "... 3 to 5 items total ..."
+    "AI and Machine Learning",
+    "Health and Medicine",
+    "Programming and Software Development"
   ],
   "assignments": {
-    "<conversation_id_as_string>": {
-      "category": "<one of categories>",
-      "confidence": 0.85
+    "1": {
+      "category": "AI and Machine Learning",
+      "confidence": 0.95
     },
-    "<conversation_id_as_string>": {
-      "category": "<one of categories>",
-      "confidence": 0.92
+    "2": {
+      "category": "Health and Medicine",
+      "confidence": 0.88
     }
-  }
+  },
+  "reason": "Categories defined by keyword clustering; assignments based on semantic similarity and keyword scores."
 }
-Note: The assignments object's keys MUST be the conversation_id converted to a string (e.g., "1", "2"). The value MUST be an object containing the assigned category string and the numeric confidence score.
+```
+
+IMPORTANT Notes:
+- The assignments object's keys MUST be the conversation_id converted to a string (e.g., "1", "2")
+- Each assignment MUST include both "category" (one of the defined categories) and "confidence" (numeric value between 0.0 and 1.0)
+- The "reason" field should be 1-2 sentences maximum, explaining your categorization approach concisely
 
 4. Input Data
 Here is the actual data for you to analyze. Begin your task.

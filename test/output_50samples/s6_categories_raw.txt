@@ -1,0 +1,210 @@
+{
+  "categories": [
+    "Machine Learning and AI",
+    "Health and Medicine",
+    "Programming and Software Development"
+  ],
+  "assignments": {
+    "1": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.95
+    },
+    "2": {
+      "category": "Health and Medicine",
+      "confidence": 0.85
+    },
+    "3": {
+      "category": "Health and Medicine",
+      "confidence": 0.90
+    },
+    "4": {
+      "category": "Health and Medicine",
+      "confidence": 0.88
+    },
+    "5": {
+      "category": "Programming and Software Development",
+      "confidence": 0.80
+    },
+    "6": {
+      "category": "Programming and Software Development",
+      "confidence": 0.75
+    },
+    "7": {
+      "category": "Programming and Software Development",
+      "confidence": 0.78
+    },
+    "8": {
+      "category": "Health and Medicine",
+      "confidence": 0.87
+    },
+    "9": {
+      "category": "Programming and Software Development",
+      "confidence": 0.82
+    },
+    "10": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.93
+    },
+    "11": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.90
+    },
+    "12": {
+      "category": "Health and Medicine",
+      "confidence": 0.80
+    },
+    "13": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.92
+    },
+    "14": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.91
+    },
+    "15": {
+      "category": "Programming and Software Development",
+      "confidence": 0.85
+    },
+    "16": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.89
+    },
+    "17": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.88
+    },
+    "18": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.87
+    },
+    "19": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.86
+    },
+    "20": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.90
+    },
+    "21": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.85
+    },
+    "22": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.84
+    },
+    "23": {
+      "category": "Programming and Software Development",
+      "confidence": 0.83
+    },
+    "24": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.82
+    },
+    "25": {
+      "category": "Programming and Software Development",
+      "confidence": 0.81
+    },
+    "26": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.80
+    },
+    "27": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.79
+    },
+    "28": {
+      "category": "Programming and Software Development",
+      "confidence": 0.78
+    },
+    "29": {
+      "category": "Health and Medicine",
+      "confidence": 0.85
+    },
+    "30": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.84
+    },
+    "31": {
+      "category": "Programming and Software Development",
+      "confidence": 0.82
+    },
+    "32": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.81
+    },
+    "33": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.80
+    },
+    "34": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.79
+    },
+    "35": {
+      "category": "Programming and Software Development",
+      "confidence": 0.78
+    },
+    "36": {
+      "category": "Programming and Software Development",
+      "confidence": 0.77
+    },
+    "37": {
+      "category": "Programming and Software Development",
+      "confidence": 0.76
+    },
+    "38": {
+      "category": "Programming and Software Development",
+      "confidence": 0.75
+    },
+    "39": {
+      "category": "Programming and Software Development",
+      "confidence": 0.74
+    },
+    "40": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.73
+    },
+    "41": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.72
+    },
+    "42": {
+      "category": "Programming and Software Development",
+      "confidence": 0.71
+    },
+    "43": {
+      "category": "Programming and Software Development",
+      "confidence": 0.70
+    },
+    "44": {
+      "category": "Programming and Software Development",
+      "confidence": 0.69
+    },
+    "45": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.68
+    },
+    "46": {
+      "category": "Programming and Software Development",
+      "confidence": 0.67
+    },
+    "47": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.66
+    },
+    "48": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.65
+    },
+    "49": {
+      "category": "Machine Learning and AI",
+      "confidence": 0.64
+    },
+    "50": {
+      "category": "Health and Medicine",
+      "confidence": 0.63
+    }
+  },
+  "reason": "Categories were defined based on the predominant keywords and their relevance to specific fields; assignments reflect the dominant themes and user intents across the conversations."
+}

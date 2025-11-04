@@ -65,7 +65,7 @@ class ConversationLoader:
             샘플 대화 리스트
         """
         conversations = self.load()
-        return conversations[:n]
+        return conversations[:min(len(conversations),n)]
 
     @staticmethod
     def get_conversation_info(conversation: Dict[str, Any]) -> Dict[str, Any]:

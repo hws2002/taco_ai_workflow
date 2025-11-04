@@ -19,16 +19,24 @@ def load_keywords(path: str) -> List[Dict[str, Any]]:
         return json.load(f)
 
 
-def aggregate_keywords_per_conversation(items: List[Dict[str, Any]], top_n_per_response: int = 5) -> Dict[Any, List[str]]:
+def aggregate_keywords_per_conversation(items: List[Dict[str, Any]], top_n_per_response: int = 5) -> tuple[Dict[Any, List[str]], Dict[Any, str]]:
     conv_kw: Dict[Any, List[str]] = {}
+    conv_titles: Dict[Any, str] = {}
+
     for it in items:
         cid = it.get('conversation_id')
         kws = it.get('keywords', [])
+
+        # Store conversation title (first occurrence wins)
+        if cid not in conv_titles and 'conversation_title' in it:
+            conv_titles[cid] = it['conversation_title']
+
         # take top-N per response to avoid overwhelming the prompt
         picked = [k.get('keyword') for k in kws[:top_n_per_response] if isinstance(k, dict) and 'keyword' in k]
         if not picked:
             continue
         conv_kw.setdefault(cid, []).extend(picked)
+
     # de-duplicate and keep order per conversation
     for cid, arr in conv_kw.items():
         seen = set()
@@ -38,7 +46,8 @@ def aggregate_keywords_per_conversation(items: List[Dict[str, Any]], top_n_per_r
                 seen.add(k)
                 deduped.append(k)
         conv_kw[cid] = deduped
-    return conv_kw
+
+    return conv_kw, conv_titles
 
 
 def load_prompt(path: str) -> str:
@@ -57,8 +66,8 @@ def call_llm_categories(system_prompt: str, user_prompt: str, model: str, provid
         raise RuntimeError("OPENAI_API_KEY not found in environment. Create a .env with OPENAI_API_KEY=... or export it.")
 
     client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.chatanywhere.tech/v1"
+        api_key=api_key
+        # base_url="https://api.chatanywhere.tech/v1"
         )
     resp = client.chat.completions.create(
         model=model,
@@ -91,15 +100,15 @@ def main():
 
     # 데이터 로드 및 집계
     kw_items = load_keywords(args.keywords_input)
-    conv_keywords = aggregate_keywords_per_conversation(kw_items, top_n_per_response=args.top_n_per_response)
+    conv_keywords, conv_titles = aggregate_keywords_per_conversation(kw_items, top_n_per_response=args.top_n_per_response)
 
     # 프롬프트 구성
     system_prompt = load_prompt(args.prompt_file)
     # Provide explicit JSON output guidance (include reason)
-    output_schema_hint = (
-        "\n\n요청: 다음 형식의 JSON만 반환하세요. 예시:\n" \
-        "{\n  \"categories\": [\"카테고리1\", \"카테고리2\", ...],\n  \"assignments\": { \"<conversation_id>\": \"카테고리명\", ... },\n  \"reason\": \"왜 이런 카테고리와 할당을 했는지에 대한 상세 설명\"\n}\n"
-    )
+    # output_schema_hint = (
+    #     "\n\n요청: 다음 형식의 JSON만 반환하세요. 예시:\n" \
+    #     "{\n  \"categories\": [\"카테고리1\", \"카테고리2\", ...],\n  \"assignments\": { \"<conversation_id>\": \"카테고리명\", ... },\n  \"reason\": \"왜 이런 카테고리와 할당을 했는지에 대한 상세 설명\"\n}\n"
+    # )
 
     # Prepare a compact JSON of conversation->keywords for the model
     preview = {
@@ -108,7 +117,7 @@ def main():
     }
     user_payload = json.dumps(preview, ensure_ascii=False, indent=2)
 
-    user_prompt = f"[입력 데이터: 대화별 키워드]\n{user_payload}\n{output_schema_hint}"
+    user_prompt = f"[입력 데이터: 대화별 키워드]\n{user_payload}"
 
     # LLM 호출
     print("LLM 대분류 실행 중...")
@@ -131,12 +140,19 @@ def main():
     with open(out_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    # assignments-only 저장
+    # assignments-only 저장 (conversation_title 포함)
     assignments = data.get('assignments', {}) if isinstance(data, dict) else {}
+    # Add conversation_title to each assignment
+    enriched_assignments = {}
+    for conv_id, assignment in assignments.items():
+        enriched_assignment = assignment.copy() if isinstance(assignment, dict) else {"category": assignment, "confidence": 1.0}
+        enriched_assignment['conversation_title'] = conv_titles.get(int(conv_id) if conv_id.isdigit() else conv_id, f"Conversation {conv_id}")
+        enriched_assignments[conv_id] = enriched_assignment
+
     assign_path = Path(args.assignments_output)
     assign_path.parent.mkdir(parents=True, exist_ok=True)
     with open(assign_path, 'w', encoding='utf-8') as f:
-        json.dump(assignments, f, ensure_ascii=False, indent=2)
+        json.dump(enriched_assignments, f, ensure_ascii=False, indent=2)
 
     # LLM 원문 응답 별도 저장
     raw_path = Path(args.raw_output)
