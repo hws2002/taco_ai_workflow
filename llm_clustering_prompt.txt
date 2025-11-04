@@ -1,12 +1,12 @@
-You are a highly skilled data scientist and domain expert. 
-Your mission is to analyze a list of AI response messages and generate **3-5 high-level clusters (categories)** based on the **conversation (`conversation_id`)** level.
-You must use your comprehensive world knowledge to analyze the contextual meaning of the provided keywords, giving weight to their `score`.
+You are a highly skilled data scientist and domain expert. Your mission is to analyze a list of AI response messages and generate 3-5 high-level clusters (categories) based on the conversation (conversation_id) level.
 
-### **1. Input Schema**
+You must use your comprehensive world knowledge to analyze the contextual meaning of the provided keywords, giving weight to their score.
 
-The input data you receive will be a JSON array of `AIResponse` objects. The structure is defined as follows:
+1. Input Schema
+The input data you receive will be a JSON array of AIResponse objects. The structure is defined as follows:
 
-```typescript
+TypeScript
+
 // 1. Structure of a single Keyword object
 interface Keyword {
   keyword: string; // The keyword (string)
@@ -27,17 +27,17 @@ interface AIResponse {
 // 3. Final Input Format
 // "The data you will receive is an array of AIResponse objects."
 type InputFormat = AIResponse[];
-```
+2. Your Task
+Aggregate: Process the InputFormat array. Group all keywords by their conversation_id. Use the score to understand the relative importance of each keyword for that conversation.
 
-### **2. Your Task**
+Analyze & Cluster: Based on your "world knowledge" of the aggregated keywords, define 3-5 primary, high-level categories that best describe the dominant topics or user intents across all conversations.
 
-1.  **Aggregate:** Process the `InputFormat` array. Group all `keywords` by their `conversation_id`. Use the `score` to understand the relative importance of each keyword for that conversation.
-2.  **Analyze & Cluster:** Based on your "world knowledge" of the aggregated keywords, define 3-5 primary, high-level categories that best describe the dominant topics or user intents across all conversations.
-3.  **Assign:** Assign each unique `conversation_id` to exactly one of the high-level clusters you defined.
+Assign & Score: Assign each unique conversation_id to exactly one of the high-level clusters. You must also provide a numeric confidence score (ranging from 0.0 for low confidence to 1.0 for high confidence) that represents how strongly that conversation belongs to the assigned category.
 
-### **3. Strict Output Format (JSON only)**
-
+3. Strict Output Format (JSON only)
 You MUST return a single valid JSON object only (no markdown, no extra text). The JSON must have exactly the following keys:
+
+JSON
 
 {
   "categories": [
@@ -46,14 +46,17 @@ You MUST return a single valid JSON object only (no markdown, no extra text). Th
     "... 3 to 5 items total ..."
   ],
   "assignments": {
-    "<conversation_id>": "<one of categories>",
-    "<conversation_id>": "<one of categories>"
-  },
-  "reason": "<string: detailed rationale explaining why these categories were chosen and how conversations were assigned, referencing keywords>"
+    "<conversation_id_as_string>": {
+      "category": "<one of categories>",
+      "confidence": 0.85
+    },
+    "<conversation_id_as_string>": {
+      "category": "<one of categories>",
+      "confidence": 0.92
+    }
+  }
 }
+Note: The assignments object's keys MUST be the conversation_id converted to a string (e.g., "1", "2"). The value MUST be an object containing the assigned category string and the numeric confidence score.
 
-
-### **4. Input Data**
-
+4. Input Data
 Here is the actual data for you to analyze. Begin your task.
-
