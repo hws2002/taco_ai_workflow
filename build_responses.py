@@ -1,6 +1,7 @@
 import sys
 import json
 import time
+import re
 from pathlib import Path
 
 # 프로젝트 루트를 Python 경로에 추가
@@ -9,6 +10,32 @@ sys.path.insert(0, str(project_root))
 
 from analyze.loader import ConversationLoader
 from analyze.parser import NoteParser
+try:
+    from preprocess import preprocess_content
+except Exception:
+    preprocess_content = None
+
+
+def clean_text(text: str) -> str:
+    """
+    텍스트 전처리: 개행문자, 이모티콘, 코드 블록, 특수문자 등 제거
+
+    Args:
+        text: 원본 텍스트
+
+    Returns:
+        정제된 텍스트
+    """
+    if preprocess_content is not None:
+        return preprocess_content(text or "")
+    # fallback: minimal cleanup if preprocess.py not available
+    if not text:
+        return ""
+    text = re.sub(r'```[\s\S]*?```', ' ', text)
+    text = re.sub(r'`[^`]+`', ' ', text)
+    text = re.sub(r'https?://\S+|www\.\S+', ' ', text)
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
 
 def build_responses(sample_size: int = 50, data_path: str = None, output_path: str = None, compat_s1: bool = True) -> str:
@@ -34,12 +61,15 @@ def build_responses(sample_size: int = 50, data_path: str = None, output_path: s
 
     responses_dict = []
     for resp in ai_responses:
+        # content 전처리 적용
+        cleaned_content = clean_text(resp.content)
+
         d = {
             "response_id": resp.response_id,
             "conversation_id": resp.conversation_id,
             "conversation_title": resp.conversation_title,
             "message_index": resp.message_index,
-            "content": resp.content,
+            "content": cleaned_content,
         }
         if resp.timestamp is not None:
             d["timestamp"] = resp.timestamp
@@ -91,3 +121,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ 

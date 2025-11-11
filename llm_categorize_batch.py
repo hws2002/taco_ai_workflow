@@ -74,7 +74,7 @@ def call_llm(system_prompt: str, user_prompt: str, model: str, provider: str = '
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.2,
+        "temperature": 1.0,
     }
 
     if json_mode:
@@ -84,33 +84,21 @@ def call_llm(system_prompt: str, user_prompt: str, model: str, provider: str = '
     return resp.choices[0].message.content
 
 
-def define_categories(conv_keywords: Dict[Any, List[str]], model: str, provider: str = 'openai') -> tuple[List[str], str]:
+def define_categories(conv_keywords: Dict[Any, List[str]], prompt_template: str, model: str, provider: str = 'openai') -> tuple[List[str], str]:
     """
-    STEP 1: Define 3 categories based on ALL keywords from ALL conversations
+    STEP 1: Define 3-5 categories based on ALL keywords from ALL conversations
     """
     # Create a representation of ALL keywords from ALL conversations
     all_keywords_data = {}
     for cid, kws in conv_keywords.items():
         all_keywords_data[str(cid)] = kws[:15]  # Top 15 keywords per conversation
 
-    system_prompt = """You are a data scientist tasked with categorizing conversations.
+    # Use the loaded prompt template as system prompt
+    system_prompt = prompt_template
 
-Your task:
-1. Review the keywords from ALL conversations
-2. Define exactly 3 high-level categories that best represent the main themes
-3. Categories should be broad enough to cover all conversations but specific enough to be meaningful
-
-Return JSON only in this format:
-{
-  "categories": ["Category 1", "Category 2", "Category 3"],
-  "reason": "Brief explanation (1-2 sentences)"
-}"""
-
-    user_prompt = f"""Based on ALL conversation keywords below, define 3 categories:
-
-{json.dumps(all_keywords_data, ensure_ascii=False, indent=2)}
-
-Remember: Return exactly 3 categories in JSON format."""
+    # User prompt contains the actual data
+    user_prompt = f"""[입력 데이터: 대화별 키워드]
+{json.dumps(all_keywords_data, ensure_ascii=False, indent=2)}"""
 
     print(f"[STEP 1] 전체 {len(conv_keywords)}개 대화의 키워드로 카테고리 정의 중...")
     content = call_llm(system_prompt, user_prompt, model=model, provider=provider, json_mode=True)
@@ -118,8 +106,8 @@ Remember: Return exactly 3 categories in JSON format."""
     try:
         data = json.loads(content)
         categories = data.get('categories', [])
-        if len(categories) != 3:
-            raise ValueError(f"Expected 3 categories, got {len(categories)}")
+        if not (3 <= len(categories) <= 5):
+            raise ValueError(f"Expected 3-5 categories, got {len(categories)}")
         print(f"[STEP 1] 정의된 카테고리: {categories}")
         print(f"[STEP 1] 이유: {data.get('reason', 'N/A')}")
         return categories, data.get('reason', '')
@@ -127,33 +115,34 @@ Remember: Return exactly 3 categories in JSON format."""
         raise RuntimeError(f"Failed to parse category definition response: {content}\nError: {e}")
 
 
-def assign_conversations_batch(
+def get_preliminary_suggestions_batch(
     conv_keywords: Dict[Any, List[str]],
     categories: List[str],
     batch_size: int,
     model: str,
     provider: str = 'openai'
-) -> Dict[str, Dict[str, Any]]:
+) -> Dict[str, List[Dict[str, Any]]]:
     """
-    STEP 2: Assign each conversation to one of the categories in batches
+    STEP 2-1: Get preliminary category suggestions for each conversation in batches
+    Returns multiple suggestions per conversation for final consideration
     """
-    system_prompt = f"""You are a data scientist assigning conversations to predefined categories.
+    system_prompt = f"""You are a highly skilled data scientist. You have already defined {len(categories)} categories.
 
-The 3 categories are:
+The categories are:
 {json.dumps(categories, ensure_ascii=False, indent=2)}
 
 Your task:
-1. Review the keywords for each conversation
-2. Assign each conversation to ONE of the 3 categories above
-3. Provide a confidence score (0.0 to 1.0)
+1. Review the keywords for each conversation in the batch
+2. For EACH conversation, suggest the TOP 2 most suitable categories with confidence scores
+3. This is a preliminary analysis - final decisions will be made after reviewing all conversations
 
 Return JSON only in this format:
 {{
-  "assignments": {{
-    "conversation_id": {{
-      "category": "one of the 3 categories",
-      "confidence": 0.85
-    }},
+  "suggestions": {{
+    "conversation_id": [
+      {{"category": "category name", "confidence": 0.85, "reason": "brief reason"}},
+      {{"category": "category name", "confidence": 0.75, "reason": "brief reason"}}
+    ],
     ...
   }}
 }}"""
@@ -162,9 +151,9 @@ Return JSON only in this format:
     total_conversations = len(conv_ids)
     num_batches = math.ceil(total_conversations / batch_size)
 
-    print(f"[STEP 2] 총 {total_conversations}개 대화를 {num_batches}개 배치로 처리 중...")
+    print(f"[STEP 2-1] 총 {total_conversations}개 대화를 {num_batches}개 배치로 예비 분석 중...")
 
-    all_assignments = {}
+    all_suggestions = {}
 
     for batch_idx in range(num_batches):
         start_idx = batch_idx * batch_size
@@ -177,43 +166,120 @@ Return JSON only in this format:
             for cid in batch_conv_ids
         }
 
-        user_prompt = f"""Assign these conversations to the 3 categories:
+        user_prompt = f"""Analyze these conversations and provide preliminary category suggestions:
 
 {json.dumps(batch_data, ensure_ascii=False, indent=2)}
 
-Remember: Each conversation must be assigned to ONE of these 3 categories: {', '.join(categories)}
-Return assignments in JSON format."""
+Remember: For each conversation, suggest the TOP 2 most suitable categories from: {', '.join(categories)}
+Include brief reasons for your suggestions."""
 
-        print(f"[STEP 2] 배치 {batch_idx + 1}/{num_batches} 처리 중 (대화 {start_idx + 1}-{end_idx})...")
+        print(f"  배치 {batch_idx + 1}/{num_batches} 분석 중 (대화 {start_idx + 1}-{end_idx})...")
 
         try:
             content = call_llm(system_prompt, user_prompt, model=model, provider=provider, json_mode=True)
             data = json.loads(content)
-            batch_assignments = data.get('assignments', {})
+            batch_suggestions = data.get('suggestions', {})
 
-            # Validate assignments
-            for conv_id, assignment in batch_assignments.items():
-                if isinstance(assignment, dict):
-                    category = assignment.get('category')
-                    if category not in categories:
-                        print(f"  경고: 대화 {conv_id}의 카테고리 '{category}'가 정의된 카테고리에 없습니다. 첫 번째 카테고리로 할당합니다.")
-                        assignment['category'] = categories[0]
-                        assignment['confidence'] = 0.5
-
-            all_assignments.update(batch_assignments)
-            print(f"  배치 {batch_idx + 1} 완료: {len(batch_assignments)}개 대화 할당됨")
+            all_suggestions.update(batch_suggestions)
+            print(f"  배치 {batch_idx + 1} 완료: {len(batch_suggestions)}개 대화 분석됨")
 
         except Exception as e:
             print(f"  경고: 배치 {batch_idx + 1} 처리 실패: {e}")
-            # Assign failed conversations to first category with low confidence
+            # Provide default suggestions for failed conversations
             for cid in batch_conv_ids:
-                if str(cid) not in all_assignments:
-                    all_assignments[str(cid)] = {
-                        "category": categories[0],
-                        "confidence": 0.3
-                    }
+                if str(cid) not in all_suggestions:
+                    all_suggestions[str(cid)] = [
+                        {"category": categories[0], "confidence": 0.3, "reason": "Analysis failed"}
+                    ]
 
-    return all_assignments
+    return all_suggestions
+
+
+def finalize_assignments(
+    conv_keywords: Dict[Any, List[str]],
+    categories: List[str],
+    preliminary_suggestions: Dict[str, List[Dict[str, Any]]],
+    model: str,
+    provider: str = 'openai'
+) -> Dict[str, Dict[str, Any]]:
+    """
+    STEP 2-2: Make final assignment decisions considering ALL conversations holistically
+    """
+    system_prompt = f"""You are a highly skilled data scientist making final categorization decisions.
+
+The categories are:
+{json.dumps(categories, ensure_ascii=False, indent=2)}
+
+You have preliminary suggestions for each conversation. Now you must:
+1. Review ALL preliminary suggestions holistically
+2. Consider the overall distribution across categories
+3. Make final assignment decisions ensuring each conversation is assigned to exactly ONE category
+4. Adjust confidence scores based on the complete context
+
+Return JSON only in this format:
+{{
+  "assignments": {{
+    "conversation_id": {{
+      "category": "final category",
+      "confidence": 0.90
+    }},
+    ...
+  }},
+  "reasoning": "Brief explanation of your overall categorization strategy (2-3 sentences)"
+}}"""
+
+    # Create a summary of all preliminary suggestions
+    summary = {
+        "categories": categories,
+        "total_conversations": len(preliminary_suggestions),
+        "preliminary_analysis": preliminary_suggestions
+    }
+
+    user_prompt = f"""Based on the preliminary analysis of ALL conversations, make final category assignments:
+
+{json.dumps(summary, ensure_ascii=False, indent=2)}
+
+Consider:
+- The overall distribution of conversations across categories
+- Consistency in categorization
+- The strength of preliminary suggestions
+
+Make your final decisions and return assignments in the specified JSON format."""
+
+    print(f"\n[STEP 2-2] 전체 {len(preliminary_suggestions)}개 대화를 종합적으로 고려하여 최종 할당 중...")
+
+    try:
+        content = call_llm(system_prompt, user_prompt, model=model, provider=provider, json_mode=True)
+        data = json.loads(content)
+        assignments = data.get('assignments', {})
+        reasoning = data.get('reasoning', '')
+
+        # Validate assignments
+        for conv_id, assignment in assignments.items():
+            if isinstance(assignment, dict):
+                category = assignment.get('category')
+                if category not in categories:
+                    print(f"  경고: 대화 {conv_id}의 카테고리 '{category}'가 정의된 카테고리에 없습니다. 첫 번째 카테고리로 할당합니다.")
+                    assignment['category'] = categories[0]
+                    assignment['confidence'] = 0.5
+
+        print(f"  최종 할당 완료: {len(assignments)}개 대화")
+        print(f"  LLM 추론: {reasoning}")
+
+        return assignments
+
+    except Exception as e:
+        print(f"  경고: 최종 할당 실패: {e}")
+        # Fallback: use preliminary suggestions
+        fallback_assignments = {}
+        for conv_id, suggestions in preliminary_suggestions.items():
+            if suggestions and len(suggestions) > 0:
+                best_suggestion = suggestions[0]
+                fallback_assignments[conv_id] = {
+                    "category": best_suggestion.get("category", categories[0]),
+                    "confidence": best_suggestion.get("confidence", 0.5)
+                }
+        return fallback_assignments
 
 
 def main():
@@ -221,18 +287,22 @@ def main():
 
     parser = argparse.ArgumentParser(description="LLM-based batch categorization using extracted keywords")
     parser.add_argument("--keywords-input", type=str, default=str(project_root / 'test' / 'output' / 's2_ai_responses_with_keywords.json'), help="키워드 JSON 경로")
-    parser.add_argument("--prompt-file", type=str, default=str(project_root / 'llm_clustering_prompt.txt'), help="프롬프트 템플릿 파일 경로 (참고용, 실제로는 내장 프롬프트 사용)")
+    parser.add_argument("--prompt-file", type=str, default=str(project_root / 'llm_clustering_prompt.txt'), help="프롬프트 템플릿 파일 경로")
     parser.add_argument("--output", type=str, default=str(project_root / 'test' / 'output' / 's6_categories.json'), help="대분류 결과 JSON 출력 경로")
     parser.add_argument("--assignments-output", type=str, default=str(project_root / 'test' / 'output' / 's6_categories_assignments.json'), help="assignments 전용 매핑 JSON 출력 경로")
-    parser.add_argument("--model", type=str, default="gpt-4o", help="LLM 모델명 (예: gpt-4o)")
+    parser.add_argument("--model", type=str, default="gpt-4o-mini", help="LLM 모델명 (예: gpt-4o)")
     parser.add_argument("--provider", type=str, default="openai", help="LLM 제공자 (현재 openai만 지원)")
     parser.add_argument("--top-n-per-response", type=int, default=5, help="응답당 사용할 상위 키워드 수")
-    parser.add_argument("--batch-size", type=int, default=20, help="한 번에 처리할 대화 수")
+    parser.add_argument("--batch-size", type=int, default=50, help="한 번에 처리할 대화 수")
     parser.add_argument("--raw-output", type=str, default=str(project_root / 'test' / 'output' / 's6_categories_raw_batch.txt'), help="LLM 원문 응답 저장 경로")
     args = parser.parse_args()
 
     # .env 로드
     load_dotenv()
+
+    # 프롬프트 템플릿 로드
+    print("프롬프트 템플릿 로드 중...")
+    prompt_template = load_prompt(args.prompt_file)
 
     # 데이터 로드 및 집계
     print("데이터 로드 중...")
@@ -241,13 +311,22 @@ def main():
     print(f"총 {len(conv_keywords)}개 대화 발견")
 
     # STEP 1: Define categories
-    categories, reason = define_categories(conv_keywords, model=args.model, provider=args.provider)
+    categories, reason = define_categories(conv_keywords, prompt_template, model=args.model, provider=args.provider)
 
-    # STEP 2: Assign conversations in batches
-    assignments = assign_conversations_batch(
+    # STEP 2-1: Get preliminary suggestions in batches
+    preliminary_suggestions = get_preliminary_suggestions_batch(
         conv_keywords,
         categories,
         batch_size=args.batch_size,
+        model=args.model,
+        provider=args.provider
+    )
+
+    # STEP 2-2: Make final assignments considering all conversations holistically
+    assignments = finalize_assignments(
+        conv_keywords,
+        categories,
+        preliminary_suggestions,
         model=args.model,
         provider=args.provider
     )
