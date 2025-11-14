@@ -126,26 +126,25 @@ def get_preliminary_suggestions_batch(
     STEP 2-1: Get preliminary category suggestions for each conversation in batches
     Returns multiple suggestions per conversation for final consideration
     """
-    system_prompt = f"""You are a highly skilled data scientist. You have already defined {len(categories)} categories.
-
-The categories are:
-{json.dumps(categories, ensure_ascii=False, indent=2)}
-
-Your task:
-1. Review the keywords for each conversation in the batch
-2. For EACH conversation, suggest the TOP 2 most suitable categories with confidence scores
-3. This is a preliminary analysis - final decisions will be made after reviewing all conversations
-
-Return JSON only in this format:
-{{
-  "suggestions": {{
-    "conversation_id": [
-      {{"category": "category name", "confidence": 0.85, "reason": "brief reason"}},
-      {{"category": "category name", "confidence": 0.75, "reason": "brief reason"}}
-    ],
-    ...
-  }}
-}}"""
+    categories_block = json.dumps(categories, ensure_ascii=False, indent=2)
+    system_prompt = (
+        f"You are a highly skilled data scientist. You have already defined {len(categories)} categories.\n\n"
+        f"The categories are:\n{categories_block}\n\n"
+        "Your task:\n"
+        "1. Review the keywords for each conversation in the batch\n"
+        "2. For EACH conversation, suggest the TOP 2 most suitable categories\n"
+        "3. This is a preliminary analysis - final decisions will be made after reviewing all conversations\n\n"
+        "Return JSON only in this format:\n"
+        "{{\n"
+        "  \"suggestions\": {{\n"
+        "    \"conversation_id\": [\n"
+        "      {{\"category\": \"category name\", \"reason\": \"brief reason\"}},\n"
+        "      {{\"category\": \"category name\", \"reason\": \"brief reason\"}}\n"
+        "    ],\n"
+        "    ...\n"
+        "  }}\n"
+        "}}"
+    )
 
     conv_ids = list(conv_keywords.keys())
     total_conversations = len(conv_ids)
@@ -189,7 +188,7 @@ Include brief reasons for your suggestions."""
             for cid in batch_conv_ids:
                 if str(cid) not in all_suggestions:
                     all_suggestions[str(cid)] = [
-                        {"category": categories[0], "confidence": 0.3, "reason": "Analysis failed"}
+                        {"category": categories[0], "reason": "Analysis failed"}
                     ]
 
     return all_suggestions
@@ -205,28 +204,25 @@ def finalize_assignments(
     """
     STEP 2-2: Make final assignment decisions considering ALL conversations holistically
     """
-    system_prompt = f"""You are a highly skilled data scientist making final categorization decisions.
-
-The categories are:
-{json.dumps(categories, ensure_ascii=False, indent=2)}
-
-You have preliminary suggestions for each conversation. Now you must:
-1. Review ALL preliminary suggestions holistically
-2. Consider the overall distribution across categories
-3. Make final assignment decisions ensuring each conversation is assigned to exactly ONE category
-4. Adjust confidence scores based on the complete context
-
-Return JSON only in this format:
-{{
-  "assignments": {{
-    "conversation_id": {{
-      "category": "final category",
-      "confidence": 0.90
-    }},
-    ...
-  }},
-  "reasoning": "Brief explanation of your overall categorization strategy (2-3 sentences)"
-}}"""
+    categories_block = json.dumps(categories, ensure_ascii=False, indent=2)
+    system_prompt = (
+        "You are a highly skilled data scientist making final categorization decisions.\n\n"
+        f"The categories are:\n{categories_block}\n\n"
+        "You have preliminary suggestions for each conversation. Now you must:\n"
+        "1. Review ALL preliminary suggestions holistically\n"
+        "2. Consider the overall distribution across categories\n"
+        "3. Make final assignment decisions ensuring each conversation is assigned to exactly ONE category\n\n"
+        "Return JSON only in this format:\n"
+        "{{\n"
+        "  \"assignments\": {{\n"
+        "    \"conversation_id\": {{\n"
+        "      \"category\": \"final category\"\n"
+        "    }},\n"
+        "    ...\n"
+        "  }},\n"
+        "  \"reasoning\": \"Brief explanation of your overall categorization strategy (2-3 sentences)\"\n"
+        "}}"
+    )
 
     # Create a summary of all preliminary suggestions
     summary = {
@@ -261,7 +257,6 @@ Make your final decisions and return assignments in the specified JSON format.""
                 if category not in categories:
                     print(f"  경고: 대화 {conv_id}의 카테고리 '{category}'가 정의된 카테고리에 없습니다. 첫 번째 카테고리로 할당합니다.")
                     assignment['category'] = categories[0]
-                    assignment['confidence'] = 0.5
 
         print(f"  최종 할당 완료: {len(assignments)}개 대화")
         print(f"  LLM 추론: {reasoning}")
@@ -276,8 +271,7 @@ Make your final decisions and return assignments in the specified JSON format.""
             if suggestions and len(suggestions) > 0:
                 best_suggestion = suggestions[0]
                 fallback_assignments[conv_id] = {
-                    "category": best_suggestion.get("category", categories[0]),
-                    "confidence": best_suggestion.get("confidence", 0.5)
+                    "category": best_suggestion.get("category", categories[0])
                 }
         return fallback_assignments
 
@@ -347,7 +341,7 @@ def main():
     # assignments-only 저장 (conversation_title 포함)
     enriched_assignments = {}
     for conv_id, assignment in assignments.items():
-        enriched_assignment = assignment.copy() if isinstance(assignment, dict) else {"category": assignment, "confidence": 1.0}
+        enriched_assignment = assignment.copy() if isinstance(assignment, dict) else {"category": assignment}
         enriched_assignment['conversation_title'] = conv_titles.get(int(conv_id) if conv_id.isdigit() else conv_id, f"Conversation {conv_id}")
         enriched_assignments[conv_id] = enriched_assignment
 

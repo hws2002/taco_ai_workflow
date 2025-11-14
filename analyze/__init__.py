@@ -10,12 +10,10 @@ from .loader import ConversationLoader
 from .parser import NoteParser
 from .semantic_analyzer import SemanticAnalyzer
 from .relationship_builder import RelationshipBuilder
-from .graph_storage import Neo4jStorage
 
 __all__ = [
     "ConversationLoader",
     "NoteParser",
     "SemanticAnalyzer",
-    "RelationshipBuilder",
-    "Neo4jStorage"
+    "RelationshipBuilder"
 ]

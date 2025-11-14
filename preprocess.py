@@ -2,7 +2,7 @@ import re
 import emoji # (설치 필요: pip install emoji)
 import jieba # (설치 필요: pip install jieba)
 
-# [✨ 핵심 1] re.sub의 콜백 함수 정의
+# [핵심 1] re.sub의 콜백 함수 정의
 # 텍스트 스캔 중 중국어 블록을 찾으면(match) 이 함수가 호출됩니다.
 def _apply_jieba_to_chinese(match):
     """
@@ -20,10 +20,10 @@ def preprocess_content(text):
     1. 코드 블록 (```...```) 제거
     2. URL (http..., www...) 제거
     3. 이모티콘 (😂, ️ 등) 제거
-    4. [✨ 수정] 광범위한 문장 부호 및 특수기호 제거
+    4. [수정] 광범위한 문장 부호 및 특수기호 제거
     5. 인용/출처 태그 (예: 【7†source】) 제거
     6. 마크다운 수평선 (---) 제거
-    7. [✨ 핵심] "중국어" 블록에만 선택적으로 jieba 띄어쓰기 적용
+    7. [핵심] "중국어" 블록에만 선택적으로 jieba 띄어쓰기 적용
     8. 모든 공백(줄바꿈, 탭, 여러 공백)을 단일 공백으로 변환
     """
     
