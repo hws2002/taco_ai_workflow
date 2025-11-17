@@ -23,3 +23,4 @@ requests>=2.31.0
 # 유틸리티
 tqdm>=4.65.0
 python-dotenv>=1.0.0
+matplotlib>=3.5.0  # 시각화

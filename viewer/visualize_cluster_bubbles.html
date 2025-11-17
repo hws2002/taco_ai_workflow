@@ -151,6 +151,37 @@
       }
 
       /* ============================================
+         EDGE STYLES
+         ============================================ */
+      .edge {
+        fill: none;
+        stroke: #94a3b8;
+        pointer-events: none;
+      }
+
+      .edge.hidden {
+        display: none;
+      }
+
+      .edge.intra-cluster {
+        stroke: #64748b;
+        stroke-dasharray: none;
+      }
+
+      .edge.inter-cluster {
+        stroke: #94a3b8;
+        stroke-dasharray: 4 2;
+      }
+
+      .edge.high-confidence {
+        stroke: #3b82f6;
+      }
+
+      .edge.medium-confidence {
+        stroke: #8b5cf6;
+      }
+
+      /* ============================================
          TOOLTIP & STATUS MESSAGES
          ============================================ */
       #tooltip {
@@ -283,6 +314,24 @@
             <span id="node-padding-value">20</span>
           </label>
 
+          <!-- Toggle to show/hide edges -->
+          <label class="control">
+            <input id="toggle-edges" type="checkbox" checked />
+            <span>Show edges</span>
+          </label>
+
+          <!-- Filter edges by type -->
+          <label class="control">
+            <span>Edge filter</span>
+            <select id="edge-filter">
+              <option value="all">All edges</option>
+              <option value="hard">Hard edges only</option>
+              <option value="insight">Insight edges only</option>
+              <option value="intra">Intra-cluster only</option>
+              <option value="inter">Inter-cluster only</option>
+            </select>
+          </label>
+
           <!-- File input to load custom JSON data -->
           <label class="control">
             <span>Custom JSON</span>
@@ -314,8 +363,8 @@
         <span>Tip: drag to pan, scroll to zoom.</span>
         <span>
           Update data by editing
-          <code>results/visualization/clustered_nodes_full_k=3.json</code>
-          then reloading.
+          <code>output/graph.json</code>
+          then reloading, or use the Custom JSON picker above.
         </span>
       </footer>
     </main>
@@ -330,7 +379,7 @@
          ============================================ */
       const CONFIG = {
         // Path to your JSON data file
-        DATA_PATH: "../test/output/s6_categories_assignments.json",
+        DATA_PATH: "../output/graph.json",
 
         // Font family for text rendering
         FONT_FAMILY:
@@ -361,6 +410,18 @@
           "#9B51E0", // Violet
           "#27AE60", // Dark Green
         ],
+
+        // Edge visualization settings
+        EDGE_OPACITY: {
+          high: 0.6,
+          medium: 0.4,
+          default: 0.2,
+        },
+        EDGE_WIDTH: {
+          high: 2.0,
+          medium: 1.5,
+          default: 1.0,
+        },
       };
 
       /* ============================================
@@ -403,6 +464,8 @@
       const labelLengthValue = document.getElementById("label-length-value");
       const nodePaddingSlider = document.getElementById("node-padding");
       const nodePaddingValue = document.getElementById("node-padding-value");
+      const edgeToggle = document.getElementById("toggle-edges");
+      const edgeFilter = document.getElementById("edge-filter");
       const fileInput = document.getElementById("file-input");
 
       // Initialize slider displays
@@ -424,6 +487,20 @@
       }
 
       /**
+       * Get display title for a node
+       * @param {Object} node - Node data
+       * @returns {string} Display title
+       */
+      function getNodeTitle(node) {
+        // Use title if available, otherwise use top keywords or orig_id
+        if (node.title) return node.title;
+        if (node.top_keywords && node.top_keywords.length > 0) {
+          return node.top_keywords[0];
+        }
+        return node.orig_id || `Node ${node.id || node.node_id}`;
+      }
+
+      /**
        * Wrap text labels to fit within a maximum character width
        * Handles both spaced text and continuous text (like CJK characters)
        * @param {d3.Selection} selection - D3 selection of text elements
@@ -432,8 +509,7 @@
       function wrapLabel(selection, maxChars = 16) {
         selection.each(function () {
           const text = d3.select(this);
-          const raw =
-            text.datum().title || `Conversation ${text.datum().node_id}`;
+          const raw = getNodeTitle(text.datum());
 
           if (!raw) {
             text.text("");
@@ -560,6 +636,7 @@
               ),
               cluster_color: colorScale(cluster.id),
               cluster_name: cluster.name,
+              node_id: leaf.data.id, // Ensure node_id is set
             }));
 
           return {
@@ -601,6 +678,107 @@
          ============================================ */
 
       /**
+       * Build a lookup map from node ID to absolute position
+       * @param {Array} clusterData - Processed cluster data
+       * @returns {Map} Map of node_id to {x, y, cluster_id}
+       */
+      function buildNodePositionMap(clusterData) {
+        const positionMap = new Map();
+
+        clusterData.forEach(cluster => {
+          cluster.nodes.forEach(node => {
+            positionMap.set(node.id || node.node_id, {
+              x: cluster.cx + node.x,
+              y: cluster.cy + node.y,
+              cluster_id: cluster.id,
+            });
+          });
+        });
+
+        return positionMap;
+      }
+
+      /**
+       * Filter edges based on current filter selection
+       * @param {Array} edges - All edges
+       * @param {string} filterType - Filter type from edge-filter select
+       * @returns {Array} Filtered edges
+       */
+      function filterEdges(edges, filterType) {
+        if (filterType === "all") return edges;
+
+        return edges.filter(edge => {
+          switch (filterType) {
+            case "hard":
+              return edge.type === "hard";
+            case "insight":
+              return edge.type === "insight";
+            case "intra":
+              return edge.intraCluster === true;
+            case "inter":
+              return edge.intraCluster === false;
+            default:
+              return true;
+          }
+        });
+      }
+
+      /**
+       * Render edges between nodes
+       * @param {Array} edges - Edge data
+       * @param {Map} positionMap - Node position lookup
+       */
+      function renderEdges(edges, positionMap) {
+        // Remove existing edges
+        zoomLayer.selectAll(".edge").remove();
+
+        if (!edges || !edgeToggle.checked) return;
+
+        // Filter edges based on current filter
+        const filteredEdges = filterEdges(edges, edgeFilter.value);
+
+        // Create edge group (render before nodes so edges are behind)
+        const edgeGroup = zoomLayer.insert("g", ":first-child").attr("class", "edges");
+
+        // Draw edges as lines
+        edgeGroup
+          .selectAll(".edge")
+          .data(filteredEdges)
+          .enter()
+          .append("line")
+          .attr("class", d => {
+            const classes = ["edge"];
+            if (d.intraCluster) classes.push("intra-cluster");
+            else classes.push("inter-cluster");
+            if (d.type === "hard") classes.push("high-confidence");
+            else if (d.type === "insight") classes.push("medium-confidence");
+            return classes.join(" ");
+          })
+          .attr("x1", d => {
+            const sourcePos = positionMap.get(d.source);
+            return sourcePos ? sourcePos.x : 0;
+          })
+          .attr("y1", d => {
+            const sourcePos = positionMap.get(d.source);
+            return sourcePos ? sourcePos.y : 0;
+          })
+          .attr("x2", d => {
+            const targetPos = positionMap.get(d.target);
+            return targetPos ? targetPos.x : 0;
+          })
+          .attr("y2", d => {
+            const targetPos = positionMap.get(d.target);
+            return targetPos ? targetPos.y : 0;
+          })
+          .attr("stroke-width", d => {
+            return d.type === "hard" ? CONFIG.EDGE_WIDTH.high : CONFIG.EDGE_WIDTH.medium;
+          })
+          .attr("stroke-opacity", d => {
+            return d.type === "hard" ? CONFIG.EDGE_OPACITY.high : CONFIG.EDGE_OPACITY.medium;
+          });
+      }
+
+      /**
        * Draw the legend showing cluster colors and sizes
        * @param {Array} clusterData - Processed cluster data
        */
@@ -625,10 +803,20 @@
       /**
        * Render the cluster visualization
        * @param {Array} clusterData - Processed cluster data
+       * @param {Array} edges - Edge data (optional)
        */
-      function render(clusterData) {
+      function render(clusterData, edges = null) {
         // Clear existing visualization
         zoomLayer.selectAll(".cluster").remove();
+        zoomLayer.selectAll(".edges").remove();
+
+        // Build node position map for edge rendering
+        const positionMap = buildNodePositionMap(clusterData);
+
+        // Render edges first (so they appear behind nodes)
+        if (edges && edges.length > 0) {
+          renderEdges(edges, positionMap);
+        }
 
         // Create cluster groups
         const clusterGroups = zoomLayer
@@ -673,14 +861,18 @@
           .attr("fill-opacity", 0.82)
           .on("mouseenter", (event, d) => {
             const [x, y] = d3.pointer(event, document.body);
+            const title = getNodeTitle(d);
+            const keywords = d.top_keywords ? d.top_keywords.slice(0, 3).join(", ") : "—";
             tooltip
               .style("display", "block")
               .style("left", `${x + 18}px`)
               .style("top", `${y + 18}px`)
               .html(
-                `<strong>${d.title || `Conversation ${d.node_id}`}</strong><br/>
+                `<strong>${title}</strong><br/>
+                 ID: ${d.orig_id || d.id}<br/>
                  Cluster: ${d.cluster_name}<br/>
-                 Confidence: ${formatConfidence(d.confidence)}`
+                 Confidence: ${formatConfidence(d.cluster_confidence || d.confidence)}<br/>
+                 Keywords: ${keywords}`
               );
           })
           .on("mouseleave", () => tooltip.style("display", "none"));
@@ -690,11 +882,12 @@
           .append("text")
           .attr("class", "confidence-indicator")
           .attr("y", (d) => -d.r - 6)
-          .text((d) =>
-            d.confidence === undefined || d.confidence === null
+          .text((d) => {
+            const conf = d.cluster_confidence || d.confidence;
+            return conf === undefined || conf === null
               ? ""
-              : (d.confidence * 100).toFixed(0) + "%"
-          );
+              : (conf * 100).toFixed(0) + "%";
+          });
 
         // Draw node labels below nodes
         nodeGroups
@@ -702,7 +895,7 @@
           .attr("class", "node-label")
           .classed("hidden", !labelToggle.checked)
           .attr("y", (d) => d.r + 10)
-          .text((d) => d.title || `Conversation ${d.node_id}`)
+          .text((d) => getNodeTitle(d))
           .each(function (d) {
             wrapLabel(d3.select(this), +labelLengthSlider.value);
           });
@@ -716,7 +909,7 @@
         svg.selectAll(".node-label").each(function (d) {
           const label = d3.select(this);
           label
-            .text(d.title || `Conversation ${d.node_id}`)
+            .text(getNodeTitle(d))
             .selectAll("tspan")
             .remove();
           wrapLabel(label, maxChars);
@@ -728,117 +921,50 @@
          ============================================ */
 
       /**
-       * Convert s6_categories.json or s6_categories_assignments.json format to visualization format
-       * @param {Object} categoryData - Data with categories, assignments, reason OR just assignments
-       * @returns {Object} Data object with clusters and nodes
+       * Parse graph.json format into clusters and nodes
+       * @param {Object} data - Raw graph.json data
+       * @returns {Object} {clusters, nodes, edges}
        */
-      function convertCategoryDataToVisualization(categoryData) {
-        // Check if this is already in the correct format
-        if (categoryData.clusters && categoryData.nodes) {
-          return categoryData;
-        }
-
-        // Check if this is s6_categories_assignments.json format (assignments only)
-        const firstKey = Object.keys(categoryData)[0];
-        const firstValue = categoryData[firstKey];
-        if (
-          firstValue &&
-          typeof firstValue === "object" &&
-          "category" in firstValue &&
-          "confidence" in firstValue &&
-          !categoryData.categories
-        ) {
-          // This is assignments-only format
-          // Extract unique categories from assignments
-          const categoriesSet = new Set();
-          Object.values(categoryData).forEach((assignment) => {
-            if (assignment.category) {
-              categoriesSet.add(assignment.category);
-            }
-          });
-          const categories = Array.from(categoriesSet);
-
-          // Create clusters
-          const clusters = categories.map((categoryName, idx) => ({
-            id: idx,
-            name: categoryName,
-            description: "",
+      function parseGraphData(data) {
+        // Check if this is the new graph.json format
+        if (data.metadata && data.metadata.clusters) {
+          // New format: graph.json from merge_graph.py
+          const clusterMetadata = data.metadata.clusters;
+          const clusters = Object.entries(clusterMetadata).map(([id, info]) => ({
+            id: id,
+            name: info.name,
+            description: info.description,
+            size: info.size,
+            key_themes: info.key_themes
           }));
 
-          // Create a map from category name to cluster ID
-          const categoryToClusterId = {};
-          categories.forEach((name, idx) => {
-            categoryToClusterId[name] = idx;
-          });
-
-          // Convert assignments to nodes
-          const nodes = Object.entries(categoryData).map(
-            ([conversationId, assignment]) => ({
-              node_id: conversationId,
-              cluster_id: categoryToClusterId[assignment.category],
-              confidence: assignment.confidence,
-              title:
-                assignment.conversation_title || `Conversation ${conversationId}`,
-            })
-          );
-
-          return { clusters, nodes };
+          return {
+            clusters: clusters,
+            nodes: data.nodes || [],
+            edges: data.edges || []
+          };
+        } else {
+          // Old format: clusters and nodes at top level
+          return {
+            clusters: data.clusters || [],
+            nodes: data.nodes || [],
+            edges: data.edges || []
+          };
         }
-
-        // Check if this is s6_categories.json format (full format)
-        if (categoryData.categories && categoryData.assignments) {
-          // Convert categories to clusters
-          const clusters = categoryData.categories.map((categoryName, idx) => ({
-            id: idx,
-            name: categoryName,
-            description: categoryData.reason || "",
-          }));
-
-          // Create a map from category name to cluster ID
-          const categoryToClusterId = {};
-          categoryData.categories.forEach((name, idx) => {
-            categoryToClusterId[name] = idx;
-          });
-
-          // Convert assignments to nodes
-          const nodes = Object.entries(categoryData.assignments).map(
-            ([conversationId, assignment]) => {
-              const assignObj =
-                typeof assignment === "object" ? assignment : { category: assignment };
-              return {
-                node_id: conversationId,
-                cluster_id: categoryToClusterId[assignObj.category],
-                confidence: assignObj.confidence,
-                title:
-                  assignObj.conversation_title || `Conversation ${conversationId}`,
-              };
-            }
-          );
-
-          return { clusters, nodes };
-        }
-
-        return null;
       }
 
       /**
        * Load and render visualization from data object
-       * @param {Object} data - Data object with clusters and nodes, or s6_categories format
+       * @param {Object} data - Data object with clusters and nodes
        */
       function loadAndRender(data) {
         hideStatus();
 
-        // Try to convert if it's in s6_categories.json format
-        const converted = convertCategoryDataToVisualization(data);
-        if (!converted) {
-          showStatus(
-            "Invalid data format. Expected either {clusters, nodes} or {categories, assignments, reason}."
-          );
-          return;
-        }
-
-        const clusters = converted.clusters || [];
-        const nodes = converted.nodes || [];
+        // Parse data based on format
+        const parsed = parseGraphData(data);
+        const clusters = parsed.clusters;
+        const nodes = parsed.nodes;
+        const edges = parsed.edges;
 
         if (!clusters.length || !nodes.length) {
           showStatus(
@@ -850,11 +976,12 @@
         // Store data globally for dynamic updates
         window.currentClusters = clusters;
         window.currentNodes = nodes;
+        window.currentEdges = edges;
 
         const padding = +nodePaddingSlider.value;
         const clusterData = buildClusterLayout(clusters, nodes, padding);
         drawLegend(clusterData);
-        render(clusterData);
+        render(clusterData, edges);
 
         // Set initial zoom and position
         svg.call(
@@ -916,6 +1043,7 @@
         const currentData = {
           clusters: window.currentClusters || [],
           nodes: window.currentNodes || [],
+          edges: window.currentEdges || [],
         };
 
         if (currentData.clusters.length && currentData.nodes.length) {
@@ -925,7 +1053,35 @@
             value
           );
           drawLegend(clusterData);
-          render(clusterData);
+          render(clusterData, currentData.edges);
+        }
+      });
+
+      // Toggle edge visibility
+      edgeToggle.addEventListener("change", (event) => {
+        if (event.target.checked) {
+          zoomLayer.selectAll(".edge").classed("hidden", false);
+        } else {
+          zoomLayer.selectAll(".edge").classed("hidden", true);
+        }
+      });
+
+      // Filter edges
+      edgeFilter.addEventListener("change", () => {
+        const currentData = {
+          clusters: window.currentClusters || [],
+          nodes: window.currentNodes || [],
+          edges: window.currentEdges || [],
+        };
+
+        if (currentData.clusters.length && currentData.nodes.length) {
+          const padding = +nodePaddingSlider.value;
+          const clusterData = buildClusterLayout(
+            currentData.clusters,
+            currentData.nodes,
+            padding
+          );
+          render(clusterData, currentData.edges);
         }
       });
 

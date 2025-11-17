@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Tuple, Optional
 import numpy as np
 from dataclasses import dataclass
 from collections import defaultdict
+import re
 
 try:
     from bertopic import BERTopic
@@ -14,6 +15,7 @@ try:
 except ImportError:
     BERTOPIC_AVAILABLE = False
     print("경고: BERTopic이 설치되어 있지 않습니다. pip install bertopic")
+
 
 
 @dataclass
@@ -55,7 +57,8 @@ class EmbeddingProcessor:
         nr_topics: Optional[int] = None,
         language: str = "multilingual",
         verbose: bool = True,
-        use_kmeans: bool = True
+        use_kmeans: bool = True,
+        multilingual_mixed: bool = True
     ):
         """
         Args:
@@ -65,6 +68,7 @@ class EmbeddingProcessor:
             language: 언어 설정 ("multilingual", "korean" 등)
             verbose: 진행상황 출력 여부
             use_kmeans: K-Means 사용 여부 (True면 HDBSCAN 대신 K-Means 사용)
+            multilingual_mixed: True면 한국어/중국어/영어 혼합 응답 처리 (문자 기반 n-gram)
         """
         if not BERTOPIC_AVAILABLE:
             raise ImportError("BERTopic을 설치해주세요: pip install bertopic")
@@ -75,8 +79,94 @@ class EmbeddingProcessor:
         self.language = language
         self.verbose = verbose
         self.use_kmeans = use_kmeans
+        self.multilingual_mixed = multilingual_mixed
         self.topic_model = None
         self.topic_info = None
+
+    def _tokenize_multilingual(self, text: str) -> List[str]:
+        """
+        한글, 중국어, 영문 혼합 텍스트 토크나이징
+        Java 없이 정규식 기반으로 작동
+        
+        Args:
+            text: 입력 텍스트
+            
+        Returns:
+            토크나이징된 단어 리스트
+        """
+        if not text:
+            return []
+        
+        tokens = []
+        
+        # 1. 한글 토크나이징 (정규식 기반 - Java 불필요)
+        # 한글 단어 추출 (2글자 이상)
+        korean_words = re.findall(r'[\uac00-\ud7af]{2,}', text)
+        tokens.extend([w.lower() for w in korean_words])
+        
+        # 2. 중국어 토크나이징 (정규식 기반)
+        # 중국어 문자 추출 (2글자 이상)
+        chinese_chars = re.findall(r'[\u4e00-\u9fff]{2,}', text)
+        tokens.extend([c.lower() for c in chinese_chars])
+        
+        # 3. 영문 토크나이징 (정규식 기반)
+        # 3글자 이상 영문 단어만 추출
+        english_words = re.findall(r'\b[a-zA-Z]{3,}\b', text)
+        tokens.extend([w.lower() for w in english_words])
+        
+        # 4. 숫자 제거 및 중복 제거
+        tokens = [t for t in tokens if not t.isdigit()]
+        tokens = list(dict.fromkeys(tokens))  # 순서 유지하며 중복 제거
+        
+        return tokens
+
+    def _merge_similar_keywords(self, keywords: List[str]) -> List[str]:
+        """
+        유사한 키워드 병합 (예: pip, pip37, pip pip -> pip)
+        
+        Args:
+            keywords: 원본 키워드 리스트
+            
+        Returns:
+            병합된 키워드 리스트
+        """
+        if not keywords:
+            return keywords
+        
+        # 1. 중복 제거 (정확히 같은 것)
+        seen = set()
+        unique_kw = []
+        for kw in keywords:
+            if kw not in seen:
+                seen.add(kw)
+                unique_kw.append(kw)
+        
+        # 2. 부분 문자열 제거 (예: "pip"가 있으면 "pip37", "pip pip" 제거)
+        merged = []
+        for kw in unique_kw:
+            # 다른 키워드에 포함되지 않으면 추가
+            is_substring = False
+            for other_kw in unique_kw:
+                if kw != other_kw and kw in other_kw:
+                    is_substring = True
+                    break
+            if not is_substring:
+                merged.append(kw)
+        
+        # 3. 공백 제거 (예: "pip pip" -> "pip")
+        final = []
+        for kw in merged:
+            # 공백으로 분리된 단어들이 모두 같으면 하나로 통일
+            words = kw.split()
+            if len(set(words)) == 1:  # 모든 단어가 같음
+                final.append(words[0])
+            else:
+                final.append(kw)
+        
+        # 4. 최종 중복 제거
+        final = list(dict.fromkeys(final))  # 순서 유지하며 중복 제거
+        
+        return final
 
     def cluster_with_bertopic(
         self,
@@ -127,6 +217,27 @@ class EmbeddingProcessor:
         # BERTopic 모델 초기화 및 학습
         print("\nBERTopic 모델 학습 중...")
 
+        # 다국어 혼합 응답 처리: 한글/중국어/영문 토크나이저 + 중복 제거
+        vectorizer_model = None
+        if self.multilingual_mixed:
+            from sklearn.feature_extraction.text import CountVectorizer
+            print("다국어 혼합 응답 처리 활성화 (한글/중국어/영문 토크나이저)")
+            
+            # 커스텀 토크나이저 함수
+            def multilingual_tokenizer(text):
+                return self._tokenize_multilingual(text)
+            
+            # 단어 기반 분석: 한글, 중국어, 영문 모두 처리 가능
+            vectorizer_model = CountVectorizer(
+                analyzer='word',
+                tokenizer=multilingual_tokenizer,  # 커스텀 토크나이저 사용
+                lowercase=True,
+                stop_words=None,
+                max_features=1000,
+                min_df=2,
+                max_df=0.8,
+            )
+
         # K-Means 사용 (HDBSCAN 대신)
         if self.use_kmeans:
             from sklearn.cluster import KMeans
@@ -150,6 +261,7 @@ class EmbeddingProcessor:
 
             self.topic_model = BERTopic(
                 hdbscan_model=cluster_model,
+                vectorizer_model=vectorizer_model,
                 nr_topics=self.nr_topics,
                 language=self.language,
                 verbose=self.verbose,
@@ -159,6 +271,7 @@ class EmbeddingProcessor:
             # HDBSCAN 사용 (기본값)
             self.topic_model = BERTopic(
                 min_topic_size=self.min_topic_size,
+                vectorizer_model=vectorizer_model,
                 nr_topics=self.nr_topics,
                 language=self.language,
                 verbose=self.verbose,
@@ -175,7 +288,7 @@ class EmbeddingProcessor:
         print(f"  생성된 토픽 수: {len(self.topic_info) - 1}")  # -1은 outlier 토픽 제외
         print(f"  Outlier 문서: {sum(1 for t in topics if t == -1)}개")
 
-        # 토픽별 키워드 추출
+        # 토픽별 키워드 추출 + 중복 제거
         topic_keywords_map = {}
         for topic_id in set(topics):
             if topic_id == -1:
@@ -186,6 +299,8 @@ class EmbeddingProcessor:
                 if topic_words:
                     # (word, score) 튜플에서 word만 추출
                     keywords = [word for word, score in topic_words[:10]]
+                    # 중복/유사 키워드 병합
+                    keywords = self._merge_similar_keywords(keywords)
                     topic_keywords_map[topic_id] = keywords
                 else:
                     topic_keywords_map[topic_id] = []

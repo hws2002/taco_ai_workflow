@@ -19,6 +19,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch
 import os
+from tqdm import tqdm
 
 
 def load_rows(path: Path):
@@ -47,13 +48,12 @@ def run(
     batch_size: int = 32,
     device: str = "auto",
     fp16: bool = False,
-    normalize_embeddings: bool = False,
+    normalize_embeddings: bool = True,
     chunk_size: int = 4096,
     save_every: int = 2000,
     num_workers: int = 0,
-    multi_process: bool = False,
-    mp_devices: str = "auto",
     long_strategy: str = "truncate",
+    max_seq_length: int = 512,
 ):
     rows = load_rows(input_path)
     # basic schema check
@@ -76,22 +76,25 @@ def run(
         else:
             model = SentenceTransformer(model_name)
 
-        if not multi_process:
-            if device == "auto":
-                use_device = "cuda" if torch.cuda.is_available() else "cpu"
-            else:
-                use_device = device
-            try:
-                model.to(use_device)
-            except Exception as e:
-                print(f"Warning: failed to move model to {use_device}: {e}. Using default device.")
-                use_device = str(model._target_device) if hasattr(model, "_target_device") else "cpu"
+        # Set max_seq_length to handle longer texts
+        model.max_seq_length = max_seq_length
+        print(f"Set model.max_seq_length to {max_seq_length}")
 
-            if fp16 and use_device.startswith("cuda"):
-                try:
-                    model.half()
-                except Exception as e:
-                    print(f"Warning: failed to switch model to fp16: {e}")
+        if device == "auto":
+            use_device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            use_device = device
+        try:
+            model.to(use_device)
+        except Exception as e:
+            print(f"Warning: failed to move model to {use_device}: {e}. Using default device.")
+            use_device = str(model._target_device) if hasattr(model, "_target_device") else "cpu"
+
+        if fp16 and use_device.startswith("cuda"):
+            try:
+                model.half()
+            except Exception as e:
+                print(f"Warning: failed to switch model to fp16: {e}")
 
         try:
             max_len = getattr(model, 'max_seq_length', None)
@@ -119,114 +122,62 @@ def run(
                 yield seq[i:i + n]
 
         encoded_count = 0
-        # If chunk-mean is requested, force single-process to simplify per-text handling
-        if long_strategy == "chunk-mean" and multi_process:
-            print("Warning: --long-strategy chunk-mean is not compatible with --multi-process; falling back to single-process.")
-            multi_process = False
 
         # helper: encode one text with optional chunk-mean
         def encode_single_text(text: str):
+            # Prepare encode kwargs (some models don't support num_workers)
+            encode_kwargs = {
+                "batch_size": max(1, batch_size),
+                "show_progress_bar": False,
+                "normalize_embeddings": normalize_embeddings,
+            }
+            if num_workers > 0:
+                encode_kwargs["num_workers"] = max(0, num_workers)
+            
             if long_strategy != "chunk-mean":
-                vec = model.encode(
-                    [text],
-                    batch_size=max(1, batch_size),
-                    show_progress_bar=False,
-                    normalize_embeddings=normalize_embeddings,
-                    num_workers=max(0, num_workers),
-                )[0]
+                vec = model.encode([text], **encode_kwargs)[0]
                 return np.asarray(vec, dtype=np.float32)
+            
             # chunk-mean path
             if tokenizer is None or not max_len:
                 # fallback to truncate behavior if we cannot tokenize
-                vec = model.encode(
-                    [text],
-                    batch_size=max(1, batch_size),
-                    show_progress_bar=False,
-                    normalize_embeddings=normalize_embeddings,
-                    num_workers=max(0, num_workers),
-                )[0]
+                vec = model.encode([text], **encode_kwargs)[0]
                 return np.asarray(vec, dtype=np.float32)
+            
             ids = tokenizer.encode(text, add_special_tokens=True, truncation=False)
             if len(ids) <= max_len:
-                vec = model.encode(
-                    [text],
-                    batch_size=max(1, batch_size),
-                    show_progress_bar=False,
-                    normalize_embeddings=normalize_embeddings,
-                    num_workers=max(0, num_workers),
-                )[0]
+                vec = model.encode([text], **encode_kwargs)[0]
                 return np.asarray(vec, dtype=np.float32)
+            
+            # Chunk and average with token length weighting
             chunk_texts = []
+            chunk_lengths = []
             for i in range(0, len(ids), max_len):
                 chunk_ids = ids[i:i+max_len]
                 chunk_texts.append(tokenizer.decode(chunk_ids, skip_special_tokens=True))
-            chunk_vecs = model.encode(
-                chunk_texts,
-                batch_size=max(1, batch_size),
-                show_progress_bar=False,
-                normalize_embeddings=normalize_embeddings,
-                num_workers=max(0, num_workers),
-            )
+                chunk_lengths.append(len(chunk_ids))
+            
+            chunk_vecs = model.encode(chunk_texts, **encode_kwargs)
             chunk_vecs = np.asarray(chunk_vecs, dtype=np.float32)
-            # if not normalized, average then return; if normalized, average normals (equivalent to mean of unit vecs)
-            mean_vec = chunk_vecs.mean(axis=0)
-            # optional re-normalize to unit for cosine stability if normalize_embeddings is True
+            
+            # Length-weighted average of chunks
+            chunk_lengths = np.asarray(chunk_lengths, dtype=np.float32)
+            weights = chunk_lengths / chunk_lengths.sum()
+            mean_vec = np.average(chunk_vecs, axis=0, weights=weights)
+            
+            # Re-normalize if needed
             if normalize_embeddings:
                 norm = np.linalg.norm(mean_vec)
                 if norm > 0:
                     mean_vec = mean_vec / norm
+            
             return mean_vec.astype(np.float32)
 
-        if multi_process:
-            if mp_devices == "auto":
-                if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                    target_devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-                else:
-                    cpu_workers = max(1, (os.cpu_count() or 2) - 1)
-                    target_devices = ["cpu"] * cpu_workers
-            elif mp_devices.strip().lower() == "cpu":
-                cpu_workers = max(1, (os.cpu_count() or 2) - 1)
-                target_devices = ["cpu"] * cpu_workers
-            elif mp_devices.strip().lower() == "cuda":
-                if torch.cuda.is_available() and torch.cuda.device_count() > 0:
-                    target_devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-                else:
-                    print("Warning: --mp-devices cuda requested but no CUDA devices found. Falling back to CPU.")
-                    cpu_workers = max(1, (os.cpu_count() or 2) - 1)
-                    target_devices = ["cpu"] * cpu_workers
-            else:
-                target_devices = [d.strip() for d in mp_devices.split(',') if d.strip()]
-
-            print(f"Starting multi-process pool on devices: {target_devices}")
-            pool = model.start_multi_process_pool(target_devices=target_devices)
-            try:
-                for chunk in iter_chunks(to_encode, max(1, chunk_size)):
-                    texts = [r.get('content', '') for r in chunk]
-                    emb = model.encode_multi_process(
-                        texts,
-                        pool,
-                        batch_size=max(1, batch_size),
-                        normalize_embeddings=normalize_embeddings,
-                        show_progress_bar=True,
-                    )
-                    for r, vec in zip(chunk, emb):
-                        cache[r['response_id']] = {
-                            'conversation_id': r.get('conversation_id'),
-                            'response_id': r.get('response_id'),
-                            'conversation_title': r.get('conversation_title', ''),
-                            'timestamp': r.get('timestamp'),
-                            'embedding': np.asarray(vec, dtype=np.float32),
-                        }
-                    encoded_count += len(chunk)
-                    if save_every and (encoded_count % save_every == 0):
-                        save_cache(out_pkl, cache)
-                        print(f"Progress: saved {encoded_count}/{len(to_encode)} to cache")
-            finally:
-                SentenceTransformer.stop_multi_process_pool(pool)
-        else:
-            for chunk in iter_chunks(to_encode, max(1, chunk_size)):
-                for r in chunk:
-                    text = r.get('content', '')
+        pbar = tqdm(total=len(to_encode), desc="Encoding responses", unit="response")
+        for chunk in iter_chunks(to_encode, max(1, chunk_size)):
+            for r in chunk:
+                text = r.get('content', '')
+                try:
                     vec = encode_single_text(text)
                     cache[r['response_id']] = {
                         'conversation_id': r.get('conversation_id'),
@@ -235,10 +186,14 @@ def run(
                         'timestamp': r.get('timestamp'),
                         'embedding': vec,
                     }
-                encoded_count += len(chunk)
-                if save_every and (encoded_count % save_every == 0):
-                    save_cache(out_pkl, cache)
-                    print(f"Progress: saved {encoded_count}/{len(to_encode)} to cache")
+                except Exception as e:
+                    print(f"Error encoding response {r['response_id']}: {e}")
+                    raise
+                pbar.update(1)
+            encoded_count += len(chunk)
+            if save_every and (encoded_count % save_every == 0):
+                save_cache(out_pkl, cache)
+        pbar.close()
 
         save_cache(out_pkl, cache)
         print(f"Encoded and cached: {len(to_encode)} embeddings")
@@ -250,8 +205,8 @@ def run(
 
 def main():
     p = argparse.ArgumentParser(description='Extract SBERT embeddings (incremental)')
-    p.add_argument('--input', type=str, default='test/output_full/s1_ai_responses.json')
-    p.add_argument('--out-pkl', type=str, default='test/output_full/response_embeddings.pkl')
+    p.add_argument('--input', type=str, default='output/s1_ai_responses.json')
+    p.add_argument('--out-pkl', type=str, default='output/response_embeddings.pkl')
     p.add_argument('--model', type=str, default='paraphrase-multilingual-mpnet-base-v2')
     p.add_argument('--cache-dir', type=str, default='models_cache')
     p.add_argument('--batch-size', type=int, default=64)
@@ -261,9 +216,8 @@ def main():
     p.add_argument('--chunk-size', type=int, default=4096)
     p.add_argument('--save-every', type=int, default=2000)
     p.add_argument('--num-workers', type=int, default=0, help='DataLoader workers for tokenization')
-    p.add_argument('--multi-process', action='store_true', help='Use sentence-transformers multiprocess pool')
-    p.add_argument('--mp-devices', type=str, default='auto', help='Comma-separated devices for pool or auto')
     p.add_argument('--long-strategy', type=str, default='truncate', choices=['truncate', 'chunk-mean'], help='Handle long responses by truncation or chunk-averaged embeddings')
+    p.add_argument('--max-seq-length', type=int, default=512, help='Maximum sequence length for model (default: 512)')
     args = p.parse_args()
 
     run(
@@ -278,8 +232,8 @@ def main():
         chunk_size=args.chunk_size,
         save_every=args.save_every,
         num_workers=args.num_workers,
-        multi_process=args.multi_process,
-        mp_devices=args.mp_devices,
+        long_strategy=args.long_strategy,
+        max_seq_length=args.max_seq_length,
     )
 
 
